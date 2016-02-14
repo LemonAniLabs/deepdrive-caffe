@@ -8,7 +8,10 @@
 
 #include "caffe/common.hpp"
 #include "caffe/util/device_alternate.hpp"
-#include "caffe/util/mkl_alternate.hpp"
+
+#include "openblas/cblas.h"
+
+//#include "caffe/util/mkl_alternate.hpp"
 
 namespace caffe {
 
