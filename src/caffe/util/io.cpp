@@ -10,6 +10,8 @@
 #endif  // USE_OPENCV
 #include <stdint.h>
 
+#include <io.h>
+
 #include <algorithm>
 #include <fstream>  // NOLINT(readability/streams)
 #include <string>
@@ -32,25 +34,25 @@ using google::protobuf::io::CodedOutputStream;
 using google::protobuf::Message;
 
 bool ReadProtoFromTextFile(const char* filename, Message* proto) {
-  int fd = open(filename, O_RDONLY);
+  int fd = _open(filename, O_RDONLY);
   CHECK_NE(fd, -1) << "File not found: " << filename;
   FileInputStream* input = new FileInputStream(fd);
   bool success = google::protobuf::TextFormat::Parse(input, proto);
   delete input;
-  close(fd);
+  _close(fd);
   return success;
 }
 
 void WriteProtoToTextFile(const Message& proto, const char* filename) {
-  int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  int fd = _open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   FileOutputStream* output = new FileOutputStream(fd);
   CHECK(google::protobuf::TextFormat::Print(proto, output));
   delete output;
-  close(fd);
+  _close(fd);
 }
 
 bool ReadProtoFromBinaryFile(const char* filename, Message* proto) {
-  int fd = open(filename, O_RDONLY);
+  int fd = _open(filename, O_RDONLY);
   CHECK_NE(fd, -1) << "File not found: " << filename;
   ZeroCopyInputStream* raw_input = new FileInputStream(fd);
   CodedInputStream* coded_input = new CodedInputStream(raw_input);
@@ -60,7 +62,7 @@ bool ReadProtoFromBinaryFile(const char* filename, Message* proto) {
 
   delete coded_input;
   delete raw_input;
-  close(fd);
+  _close(fd);
   return success;
 }
 
