@@ -13,7 +13,7 @@ namespace bp = boost::python;
 
 #include "boost/algorithm/string.hpp"
 #include "caffe/caffe.hpp"
-#include "caffe/util/signal_handler.h"
+//#include "caffe/util/signal_handler.h"
 
 using caffe::Blob;
 using caffe::Caffe;
@@ -196,14 +196,14 @@ int train() {
     Caffe::set_solver_count(gpus.size());
   }
 
-  caffe::SignalHandler signal_handler(
-        GetRequestedAction(FLAGS_sigint_effect),
-        GetRequestedAction(FLAGS_sighup_effect));
+//  caffe::SignalHandler signal_handler(
+//        GetRequestedAction(FLAGS_sigint_effect),
+//        GetRequestedAction(FLAGS_sighup_effect));
 
   shared_ptr<caffe::Solver<float> >
       solver(caffe::SolverRegistry<float>::CreateSolver(solver_param));
 
-  solver->SetActionFunction(signal_handler.GetActionFunction());
+  //solver->SetActionFunction(signal_handler.GetActionFunction());
 
   if (FLAGS_snapshot.size()) {
     LOG(INFO) << "Resuming from " << FLAGS_snapshot;
@@ -387,33 +387,33 @@ int time() {
 }
 RegisterBrewFunction(time);
 
-int main(int argc, char** argv) {
-  // Print output to stderr (while still logging).
-  FLAGS_alsologtostderr = 1;
-  // Set version
-  gflags::SetVersionString(AS_STRING(CAFFE_VERSION));
-  // Usage message.
-  gflags::SetUsageMessage("command line brew\n"
-      "usage: caffe <command> <args>\n\n"
-      "commands:\n"
-      "  train           train or finetune a model\n"
-      "  test            score a model\n"
-      "  device_query    show GPU diagnostic information\n"
-      "  time            benchmark model execution time");
-  // Run tool or show usage.
-  caffe::GlobalInit(&argc, &argv);
-  if (argc == 2) {
-#ifdef WITH_PYTHON_LAYER
-    try {
-#endif
-      return GetBrewFunction(caffe::string(argv[1]))();
-#ifdef WITH_PYTHON_LAYER
-    } catch (bp::error_already_set) {
-      PyErr_Print();
-      return 1;
-    }
-#endif
-  } else {
-    gflags::ShowUsageWithFlagsRestrict(argv[0], "tools/caffe");
-  }
-}
+//int main(int argc, char** argv) {
+//  // Print output to stderr (while still logging).
+//  FLAGS_alsologtostderr = 1;
+//  // Set version
+//  gflags::SetVersionString(AS_STRING(CAFFE_VERSION));
+//  // Usage message.
+//  gflags::SetUsageMessage("command line brew\n"
+//      "usage: caffe <command> <args>\n\n"
+//      "commands:\n"
+//      "  train           train or finetune a model\n"
+//      "  test            score a model\n"
+//      "  device_query    show GPU diagnostic information\n"
+//      "  time            benchmark model execution time");
+//  // Run tool or show usage.
+//  caffe::GlobalInit(&argc, &argv);
+//  if (argc == 2) {
+//#ifdef WITH_PYTHON_LAYER
+//    try {
+//#endif
+//      return GetBrewFunction(caffe::string(argv[1]))();
+//#ifdef WITH_PYTHON_LAYER
+//    } catch (bp::error_already_set) {
+//      PyErr_Print();
+//      return 1;
+//    }
+//#endif
+//  } else {
+//    gflags::ShowUsageWithFlagsRestrict(argv[0], "tools/caffe");
+//  }
+//}

@@ -841,12 +841,12 @@ void Net<Dtype>::CopyTrainedLayersFrom(const NetParameter& param) {
 
 template <typename Dtype>
 void Net<Dtype>::CopyTrainedLayersFrom(const string trained_filename) {
-  if (trained_filename.size() >= 3 &&
-      trained_filename.compare(trained_filename.size() - 3, 3, ".h5") == 0) {
-    CopyTrainedLayersFromHDF5(trained_filename);
-  } else {
+//  if (trained_filename.size() >= 3 &&
+//      trained_filename.compare(trained_filename.size() - 3, 3, ".h5") == 0) {
+//    CopyTrainedLayersFromHDF5(trained_filename);
+//  } else {
     CopyTrainedLayersFromBinaryProto(trained_filename);
-  }
+//  }
 }
 
 template <typename Dtype>
