@@ -1,12 +1,19 @@
 #include "caffe/common.hpp"
 #include "caffe/syncedmem.hpp"
 #include "caffe/util/math_functions.hpp"
+#include <future>
 
 namespace caffe {
 
 SyncedMemory::~SyncedMemory() {
   if (cpu_ptr_ && own_cpu_data_) {
-    CaffeFreeHost(cpu_ptr_, cpu_malloc_use_cuda_);
+	std::future<void> fut = std::async (CaffeFreeHost, cpu_ptr_, cpu_malloc_use_cuda_);
+	std::chrono::milliseconds span (1);
+	if(fut.wait_for(span) == std::future_status::timeout)
+	{
+		LOG(INFO) << "Timeout waiting for synced memory to clear. shape_data issue?";
+	}
+//	CaffeFreeHost(cpu_ptr_, cpu_malloc_use_cuda_);
   }
 
 #ifndef CPU_ONLY
