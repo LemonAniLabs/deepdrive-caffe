@@ -39,6 +39,7 @@
 }
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+#include <future>
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -127,7 +128,7 @@ cv::Mat* get_screen();
 void showImage(cv::Mat img);
 
 float previousDistance = std::numeric_limits<float>::min();
-float previousDelta = std::numeric_limits<float>::min();
+float previouslyTraveled = std::numeric_limits<float>::min();
 
 // the WindowProc function prototype
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -249,30 +250,42 @@ float get_reward(SharedRewardData* rewardData)
 		previousDistance = distance;
 		return 0.0;
 	}
-	float delta = previousDistance - distance;
+	float traveled = previousDistance - distance;
 	float reward = 0.0;
-	if(on_road && delta > 0)
+
+	if(traveled > previouslyTraveled)
 	{
-		reward = 1.0;
-		if(delta > previousDelta)
-		{
-			// if delta larger than last delta, give 0.1 boost, that way, never greater than 1.1
-			// Yes, same experience doesn't yield same reward, but that's how life is right?
-			reward += 0.1;
-		}
+		// if traveled further, we're speeding up, so give 0.1 boost, that way, never greater than 1.1.
+		// Yes, same experience doesn't yield same reward, but that's how life is right?
+		reward += 0.1;
 	}
-	else if( ! on_road || delta < 0)
+
+	if(on_road)
+	{
+		reward += 0.5;
+	}
+	else
+	{
+		reward -= 0.5;
+	}
+
+	if(traveled > 0)
+	{
+		reward += 0.5;
+	}
+	else if(traveled < 0)
 	{
 		// Path on road distance is given, so
 		// we should never take one step back in order to go two steps forward.
-		reward = -1.0;
+		reward = -0.5;
 	}
-	else if(on_road && delta == 0.0)
-	{
-		reward = 0.0;
-	}
+	// Travelling nowhere gets you zero reward!
+
+	// Max reward: 1.1
+	// Min reward -0.9
+
 	previousDistance = distance;
-	previousDelta = delta;
+	previouslyTraveled = traveled;
 	return reward;
 }
 
@@ -341,6 +354,12 @@ void init_dqn(int& step, dqn::NeuralQLearner*& neural_q_learner, double& reward,
 	epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
 }
 
+bool is_prime (int x) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+  for (int i=2; i<x; ++i) if (x%i==0) return false;
+  return true;
+}
+
 // the entry point for any Windows program
 int WINAPI WinMain(HINSTANCE hInstance,
                    HINSTANCE hPrevInstance,
@@ -352,6 +371,15 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	//google::SetLogDestination(google::GLOG_INFO, "C:/Users/Craig/Google Drive/caffe_nonvidia/caffe/logs");
 	//FLAGS_log_dir = "c:/logs";
 	google::InitGoogleLogging("caffe.exe");
+
+	std::future<bool> fut = std::async (is_prime,700020007); 
+
+//	std::future<bool> fut = std::async (std::this_thread::sleep_for, std::chrono::milliseconds(1000)); 
+	std::chrono::milliseconds span (10000);
+	while (fut.wait_for(span)==std::future_status::timeout)
+	{
+		std::cout << '.';	
+	}
 
 	SharedRewardData* rewardData = nullptr; 
 	while (rewardData == nullptr) {

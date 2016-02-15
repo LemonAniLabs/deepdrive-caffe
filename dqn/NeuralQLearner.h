@@ -496,13 +496,10 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	{
 		LOG(INFO) << "Problem forwarding, most likely Eltwise product memory violation";
 		// TODO: Figure out why this is happening, where exactly (reshape or action), how often it happens and fix it.
-		// TODO: If this gets ported off windows, may need to do this: http://stackoverflow.com/a/918891/134077
+		// TODO: If this gets ported off windows, may need to do this for handling memory exceptions: http://stackoverflow.com/a/918891/134077
 		action = last_action_;
 	}
 
-	//cv::waitKey(0);
-
-	// TODO: Do this every minute or so, not every frame.
 	if(should_train_ && iter_ % train_iter_ == 0)
 	{
 		if(should_train_async_)
