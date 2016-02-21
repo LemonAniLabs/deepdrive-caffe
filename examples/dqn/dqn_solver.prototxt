@@ -7,9 +7,11 @@ lr_policy: "fixed"
 snapshot: 5000
 snapshot_prefix: "caffe_dqn_train"
 max_iter: 50000000
+weight_decay: 0.0005
 display: 10000
 solver_mode: GPU
 debug_info: true
+test_initialization: false
 
 ## TODO: Delete - should only be used for test validation which we don't do.
 #### test_iter specifies how many forward passes the test should carry out.

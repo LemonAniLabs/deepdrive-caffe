@@ -94,7 +94,7 @@ class NeuralQLearner
 
 		// set device id and mode
 		caffe::Caffe::SetDevice(0);
-		caffe::Caffe::set_mode(caffe::Caffe::CPU);
+		caffe::Caffe::set_mode(caffe::Caffe::GPU);
 
 		// solver handler
 		solver_ = caffe::SolverRegistry<float>::CreateSolver(solver_param);
