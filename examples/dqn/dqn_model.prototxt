@@ -35,11 +35,11 @@ layer {
   bottom: "gta_frames_input_layer"
   top: "conv1"
   param {
-    lr_mult: 0    # learning rate multiplier for the filters
+    lr_mult: 0      # learning rate multiplier for the filters
     decay_mult: 0 # weight decay multiplier for the filters
   }
   param {
-    lr_mult: 0    # learning rate multiplier for the biases
+    lr_mult: 0      # learning rate multiplier for the biases
     decay_mult: 0 # weight decay multiplier for the biases
   }
   convolution_param {
@@ -98,11 +98,11 @@ layer {
   bottom: "norm1"
   top: "conv2"
   param {
-    lr_mult: 0    # learning rate multiplier for the filters
+    lr_mult: 0      # learning rate multiplier for the filters
     decay_mult: 0 # weight decay multiplier for the filters
   }
   param {
-    lr_mult: 0    # learning rate multiplier for the biases
+    lr_mult: 0      # learning rate multiplier for the biases
     decay_mult: 0 # weight decay multiplier for the biases
   }
 
@@ -160,7 +160,7 @@ layer {
   top: "conv3"
  param {
    lr_mult: 0.01  # learning rate multiplier for the filters
-   decay_mult: 0  # weight decay multiplier for the filters
+   decay_mult: 0.01  # weight decay multiplier for the filters
  }
  param {
    lr_mult: 0.02  # learning rate multiplier for the biases
@@ -195,7 +195,7 @@ layer {
   top: "conv4"
   param {
     lr_mult: 0.02    # learning rate multiplier for the filters
-    decay_mult: 0    # weight decay multiplier for the filters
+    decay_mult: 0.02 # weight decay multiplier for the filters
   }
   param {
     lr_mult: 0.04    # learning rate multiplier for the biases
@@ -231,7 +231,7 @@ layer {
   top: "conv5"
  param {
    lr_mult: 0.04    # learning rate multiplier for the filters
-   decay_mult: 0    # weight decay multiplier for the filters
+   decay_mult: 0.04 # weight decay multiplier for the filters
  }
  param {
    lr_mult: 0.08    # learning rate multiplier for the biases
@@ -278,8 +278,8 @@ layer {
   bottom: "pool5"
   top: "fc6"
   param {
-    lr_mult: 1    # learning rate multiplier for the filters
-    decay_mult: 0 # weight decay multiplier for the filters
+    lr_mult: 1     # learning rate multiplier for the filters
+    decay_mult: 1 # weight decay multiplier for the filters
   }
   param {
     lr_mult: 2     # learning rate multiplier for the biases
@@ -311,7 +311,7 @@ layer {
   bottom: "fc6"
   top: "fc6"
   dropout_param {
-    dropout_ratio: 0
+    dropout_ratio: 0.5
   }
 }
 
@@ -322,7 +322,7 @@ layer {
   top: "fc7"
   param {
     lr_mult: 1    # learning rate multiplier for the filters
-    decay_mult: 0 # weight decay multiplier for the filters
+    decay_mult: 1 # weight decay multiplier for the filters
   }
   param {
     lr_mult: 2    # learning rate multiplier for the biases
@@ -354,7 +354,7 @@ layer {
   bottom: "fc7"
   top: "fc7"
   dropout_param {
-    dropout_ratio: 0
+    dropout_ratio: 0.5
   }
 }
 
@@ -366,7 +366,7 @@ layer {
   top: "gtanet_q_values"
   param {
     lr_mult: 1    # learning rate multiplier for the filters
-    decay_mult: 0 # weight decay multiplier for the filters
+    decay_mult: 1 # weight decay multiplier for the filters
   }
   param {
     lr_mult: 2    # learning rate multiplier for the biases
@@ -533,7 +533,7 @@ layer {
 #   top: "fc8"
 #   param {
 #     lr_mult: 1
-#     decay_mult: 0
+#     decay_mult: 1
 #   }
 #   param {
 #     lr_mult: 2
