@@ -292,6 +292,24 @@ float get_reward(SharedRewardData* rewardData)
 	return reward;
 }
 
+void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner)
+{
+	bool weights_loaded = false;
+	while(!weights_loaded)
+	{
+		try
+		{
+			neural_q_learner->load_weights("examples/dqn/bvlc_reference_caffenet.caffemodel");
+			weights_loaded = true;
+		}
+		catch(...)
+		{
+			LOG(ERROR) << "Could not load weights, set breakpoint here, change prototxt and retry";
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		}
+	}
+}
+
 void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
 {
 	// Frames are about 100k. So this adds up fast.
@@ -313,6 +331,7 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
 	double discount = 0.99;
 	double q_learning_rate = 0.00025;
 	bool should_train = true;
+	bool should_load_pretrained = false;
 	int train_iter = 16; // Will need to tune to memory limits. // TODO: mem
 	bool should_train_async = false;
 	int clone_iter = 10000;
@@ -326,19 +345,9 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
 		should_train_async, clone_iter);
 
 	// Fine tune
-	bool weights_loaded = false;
-	while(!weights_loaded)
+	if(should_load_pretrained)
 	{
-		try
-		{
-			neural_q_learner->load_weights("examples/dqn/bvlc_reference_caffenet.caffemodel");
-			weights_loaded = true;
-		}
-		catch(...)
-		{
-			LOG(ERROR) << "Could not load weights, set breakpoint here, change prototxt and retry";
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		}
+		load_pretrained_net(neural_q_learner);
 	}
 }
 

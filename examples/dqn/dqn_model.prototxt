@@ -305,15 +305,15 @@ layer {
   top: "fc6"
 }
 
-layer {
-  name: "drop6_gtanet"
-  type: "Dropout"
-  bottom: "fc6"
-  top: "fc6"
-  dropout_param {
-    dropout_ratio: 0
-  }
-}
+#layer {
+#  name: "drop6_gtanet"
+#  type: "Dropout"
+#  bottom: "fc6"
+#  top: "fc6"
+#  dropout_param {
+#    dropout_ratio: 0
+#  }
+#}
 
 layer {
   name: "fc7_gtanet"
@@ -348,15 +348,15 @@ layer {
   top: "fc7"
 }
 
-layer {
-  name: "drop7_gtanet"
-  type: "Dropout"
-  bottom: "fc7"
-  top: "fc7"
-  dropout_param {
-    dropout_ratio: 0
-  }
-}
+#layer {
+#  name: "drop7_gtanet"
+#  type: "Dropout"
+#  bottom: "fc7"
+#  top: "fc7"
+#  dropout_param {
+#    dropout_ratio: 0
+#  }
+#}
 
 # The output layer is a fully-connected linear layer with a single output for each valid action.
 layer {
