@@ -7,6 +7,7 @@ lr_policy: "fixed"
 snapshot: 5000
 snapshot_prefix: "caffe_dqn_train"
 max_iter: 50000000
+weight_decay: 0
 display: 10000
 solver_mode: GPU
 debug_info: true
