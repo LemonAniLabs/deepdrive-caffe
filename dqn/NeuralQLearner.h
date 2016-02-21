@@ -266,15 +266,16 @@ class NeuralQLearner
 			action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
 			target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
 
-			// TODO: Remove this redundant forward pass, just used for checking
-//			auto loss = net->ForwardPrefilled();
+			LOG(INFO) << "Real loss";
 
+//			auto loss = net->ForwardPrefilled();
 			solver_->Step(1);
 
-//			auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_actions_);
-//			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
-//			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
-//			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
+
 			std::vector<float> blank;
 			return blank;
 			auto results = net->output_blobs();
@@ -334,8 +335,8 @@ class NeuralQLearner
 		// Perform a minibatch Q-learning update:
 		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
 		if( ! ready_to_learn()) { return; }
-		//while(true)
-		//{
+		while(true)
+		{
 			set_batch_size(minibatch_size_);
 			purge_old_transitions();
 			auto transistion_sample = transitions_->sample(minibatch_size_);
@@ -386,7 +387,7 @@ class NeuralQLearner
 			{
 				release_queue_lock();
 			}			
-		//}
+		}
 	}
 };
 
