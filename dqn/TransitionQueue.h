@@ -78,6 +78,7 @@ class TransitionQueue
 			// TODO: Use better random here.
 			start = 1 + (rand() % s_.size() - 1); // start at 1 because of previous action
 
+			// Terminal states may not matter for us, but orig DQN prompted the following during original port:
 			// TODO: Make sure we are not at a terminal state
 			// TODO: Discard non-terminal *next*-states (we know first state of transition is non-terminal)
 			//       with prob nonTermProb.

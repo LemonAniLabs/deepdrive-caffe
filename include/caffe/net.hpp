@@ -83,6 +83,7 @@ class Net {
   void Reshape();
 
   Dtype ForwardBackward(const vector<Blob<Dtype>* > & bottom) {
+
     Dtype loss;
     Forward(bottom, &loss);
     Backward();

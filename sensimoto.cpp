@@ -242,63 +242,60 @@ void output(const char* out_string)
 
 float get_reward(SharedRewardData* rewardData)
 {
-	float distance = (*rewardData).distance;
+	int distance = (*rewardData).distance;
 	bool on_road = (*rewardData).on_road;
 	if(previousDistance == std::numeric_limits<float>::min())
 	{
 		// First measurement
 		previousDistance = distance;
-		return 0.0;
+		return 0;
 	}
-	float traveled = previousDistance - distance;
 	float reward = 0.0;
+	int traveled = previousDistance - distance;
+
+	if(on_road && traveled > 0)
+	{
+		reward = 1; // Onward.
+	}
+	else if(on_road && traveled == 0)
+	{
+		reward = 0; // Waiting for something to pass like a train or traffic in intersection.
+	}
+	else if(on_road && traveled < 0)
+	{
+		reward = -1; // Distance is on-road so no need to go back.
+	}
+	else if( ! on_road && traveled > 0)
+	{
+		reward = 0.5; // Get back on the road.
+	}
+	else if( ! on_road && traveled < 0)
+	{
+		reward = 0; // Perhaps going around some off-road obstacle, don't give negative reward.
+	}
+	else if( ! on_road && traveled == 0 )
+	{
+		reward = -0.5; // No reason to stop when you're off-road. Need to non-zero travel to get back on.
+	}
 
 	if(traveled > previouslyTraveled)
 	{
-		// if traveled further, we're speeding up, so give 0.1 boost, that way, never greater than 1.1.
-		// Yes, same experience doesn't yield same reward, but that's how life is right?
+		// if traveled further, we're speeding up, so give 0.1 boost.
 		reward += 0.1;
 	}
 
-	if(on_road)
-	{
-		reward += 0.5;
-	}
-	else
-	{
-		reward -= 0.5;
-	}
-
-	if(traveled > 0)
-	{
-		reward += 0.5;
-	}
-	else if(traveled < 0)
-	{
-		// Path on road distance is given, so
-		// we should never take one step back in order to go two steps forward.
-		reward = -0.5;
-	}
-	// Travelling nowhere gets you zero reward!
-
 	// Max reward: 1.1
-	// Min reward -0.9
-
+	// Min reward -1
+ 
 	previousDistance = distance;
 	previouslyTraveled = traveled;
 	return reward;
 }
 
-void init_dqn(int& step, dqn::NeuralQLearner*& neural_q_learner, double& reward, 
-	bool& is_terminal, bool& is_testing, double& epsilon, double& epsilon_end, double& epsilon_step)
+void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
 {
-	step = 0;
-
-	// TODO: figure out what this is. it's 7056 for some reason. 160 * 210 pixels = 33600
-	auto state_dimension = 1;
-
-	// Frames are about 1MB. So this adds up fast.
-	auto replay_memory = 10;
+	// Frames are about 100k. So this adds up fast.
+	auto replay_memory = 16;//10000;
 
 	// Needs to be fast enough to act between batches.
 	auto minibatch_size = 16;
@@ -316,9 +313,12 @@ void init_dqn(int& step, dqn::NeuralQLearner*& neural_q_learner, double& reward,
 	double discount = 0.99;
 	double q_learning_rate = 0.00025;
 	bool should_train = true;
-	int train_iter = 1000; // Will need to tune to memory limits. // TODO: mem
+	int train_iter = 16; // Will need to tune to memory limits. // TODO: mem
 	bool should_train_async = false;
 	int clone_iter = 10000;
+
+	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
+	auto state_dimension = 1;
 
 	neural_q_learner = new dqn::NeuralQLearner(state_dimension, 
 		replay_memory, minibatch_size, n_actions, discount, q_learning_rate,
@@ -340,24 +340,6 @@ void init_dqn(int& step, dqn::NeuralQLearner*& neural_q_learner, double& reward,
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		}
 	}
-
-	reward = 0.0;
-	is_terminal = false;
-	is_testing = false;
-	epsilon = 1.0;
-	epsilon_end = 0.0;
-	// Game is not deterministic like ALE. Full explotation is not cheating.
-
-
-	// 10 actions a second for 10 hours. 
-
-	epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
-}
-
-bool is_prime (int x) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(10000));
-  for (int i=2; i<x; ++i) if (x%i==0) return false;
-  return true;
 }
 
 // the entry point for any Windows program
@@ -366,20 +348,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
                    LPSTR lpCmdLine,
                    int nCmdShow)
 {
-	//FLAGS_logtostderr = true;
-	//FLAGS_log_dir = "C:/Users/Craig/logs/game2sensor";
-	//google::SetLogDestination(google::GLOG_INFO, "C:/Users/Craig/Google Drive/caffe_nonvidia/caffe/logs");
-	//FLAGS_log_dir = "c:/logs";
+	// Logs are in user folder AppData/Local/temp
 	google::InitGoogleLogging("caffe.exe");
-
-	std::future<bool> fut = std::async (is_prime,700020007); 
-
-//	std::future<bool> fut = std::async (std::this_thread::sleep_for, std::chrono::milliseconds(1000)); 
-	std::chrono::milliseconds span (10000);
-	while (fut.wait_for(span)==std::future_status::timeout)
-	{
-		std::cout << '.';	
-	}
 
 	SharedRewardData* rewardData = nullptr; 
 	while (rewardData == nullptr) {
@@ -428,46 +398,24 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	cv::Mat* blank = get_screen(); // First screen is always black.
 
-//	// ******************DELETE ME*****
-//	// Test for get_screen memory cycle
-//	while(true)
-//	{
-//		std::deque<cv::Mat*> test_screens;
-//		for(int i = 0; i < 1000; i++)
-//		{
-//			cv::Mat* screen = get_screen();
-//			test_screens.push_back(screen);
-//			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-//		}
-//
-//		for(int i = 0; i < 1000; i++)
-//		{
-//			delete test_screens[0];
-////			delete d;
-//			test_screens.pop_front();
-//
-//			//(*test_screens[i]).release();
-//		}	
-//	}
-
-
 	bool should_show_image = false;
 	bool should_skip_dqn = false;
 
-	// Init dqn
-	int step;
+	// DQN
+	int step = 0;
 	dqn::NeuralQLearner* neuralQLearner = nullptr;
-	double reward;
-	bool is_terminal;
-	bool is_testing;
-	double epsilon;
-	double epsilon_end;
-	double epsilon_step;
+	double reward = 0.0;
+	bool is_terminal = false;
+	bool is_testing = false;
+	double epsilon = 1.0;
+	double epsilon_end = 0.0; // Game is not deterministic like ALE. Full explotation is not cheating.
+
+	// 10 actions a second for 10 hours. 
+	double epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
 
 	if(!should_skip_dqn)
 	{
-		init_dqn(step, neuralQLearner, reward, is_terminal, 
-			is_testing, epsilon, epsilon_end, epsilon_step);
+		init_dqn(neuralQLearner, is_testing);
 	}
 
 	// enter the main loop:
@@ -505,7 +453,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 		else
 		{
-			reward = get_reward(rewardData); // TODO: Make sure there are no reward "spikes". Will cause exploding.
+			reward = get_reward(rewardData); // TODO: Make sure there are no reward "spikes". Will cause 'sploding.
 			auto action_index = neuralQLearner->perceive(reward, screen, is_terminal, 
 				is_testing, epsilon);
 			(*agentControlData).action = action_index;
@@ -521,11 +469,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			}
 		}
 
-
-
 		// TODO: test phase
 		// Start from beginning and test total distance in 2 minutes.
-		// Save the neural net with the best performance.
+		// Save the net with best performance.
 	}
 
 	delete rewardData;

@@ -94,7 +94,7 @@ class NeuralQLearner
 
 		// set device id and mode
 		caffe::Caffe::SetDevice(0);
-		caffe::Caffe::set_mode(caffe::Caffe::GPU);
+		caffe::Caffe::set_mode(caffe::Caffe::CPU);
 
 		// solver handler
 		solver_ = caffe::SolverRegistry<float>::CreateSolver(solver_param);
@@ -132,6 +132,9 @@ class NeuralQLearner
 		ReadNetParamsFromTextFileOrDie("examples/dqn/dqn_model.prototxt", &net_param);
 		clone_net_.reset(new caffe::Net<float>(net_param));
 		reset_clone_net();
+
+		net_->set_debug_info(true);
+		clone_net_->set_debug_info(true);
 
 		// solver_->OnlineUpdateSetup(nullptr);
 	}
@@ -224,13 +227,9 @@ class NeuralQLearner
 		}		
 	}
 
-	std::vector<float> forward(std::vector<Transition>& transistion_sample, 
-		boost::shared_ptr<caffe::Net<float>> net, bool is_s1)
+	std::vector<float> feed_net(std::vector<Transition>& transistion_sample, 
+		boost::shared_ptr<caffe::Net<float>> net, bool is_s1, std::vector<float> &targets)
 	{
-		// TODO: Get Q2 from clone_net_, Q1 from net_
-		// Figure out if we need two solvers, or if you can change 
-		// the solver's net.
-
 		std::vector<cv::Mat> frames;
 		std::vector<float> actions;
 
@@ -260,13 +259,27 @@ class NeuralQLearner
 		const float* out_array;
 		if(is_s1)
 		{
+			std::vector<float> dummy_input;
 			// Get actuals - Q1
 			// Forward to train net
 			frames_input_layer_->AddMatVector(frames, labels);
 			action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
-			net->ForwardPrefilled();
+			target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
+
+			// TODO: Remove this redundant forward pass, just used for checking
+//			auto loss = net->ForwardPrefilled();
+
+			solver_->Step(1);
+
+//			auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_actions_);
+//			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
+//			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
+//			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
+			std::vector<float> blank;
+			return blank;
 			auto results = net->output_blobs();
 			out_array = results[0]->cpu_data();
+			return array_to_vec(out_array, 1);
 		}
 		else
 		{
@@ -277,10 +290,12 @@ class NeuralQLearner
 			clone_action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
 			clone_target_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_); // Placeholder, we get layer before loss for targets
 			net->ForwardPrefilled(nullptr);
-			out_array = net->blob_by_name("gtanet_q_values")->cpu_data(); // TODO store blob object and reuse pointer 
+			out_array = net->blob_by_name("gtanet_q_values")->cpu_data(); // TODO store blob object and reuse pointer
+			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
+			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
+			return array_to_vec(out_array, minibatch_size_ * num_actions_);
 		}
-
-		return array_to_vec(out_array, minibatch_size_ * num_actions_);
 	}
 
 	void purge_old_transitions()
@@ -319,63 +334,59 @@ class NeuralQLearner
 		// Perform a minibatch Q-learning update:
 		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
 		if( ! ready_to_learn()) { return; }
-		set_batch_size(minibatch_size_);
-		purge_old_transitions();
-		auto transistion_sample = transitions_->sample(minibatch_size_);
-		std::vector<float> dummy_input;
-
-		// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
-
-		if(iter_ % clone_iter_ == 0)
-		{
-			reset_clone_net();
-		}
-
-		// Forward s2
-		auto is_s1 = false;
-		auto q2_all = forward(transistion_sample, clone_net_, is_s1);
-
-		// Get targets
-		std::vector<float> targets;
-		for(int i = 0; i < minibatch_size_; i++)
-		{
-			Transition transition = transistion_sample[i];
-			std::vector<float> q_2_sample;
-			for(int j = i * num_actions_; j < ((i+1) * num_actions_); j++)
+		//while(true)
+		//{
+			set_batch_size(minibatch_size_);
+			purge_old_transitions();
+			auto transistion_sample = transitions_->sample(minibatch_size_);
+			
+			// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
+			if(iter_ % clone_iter_ == 0)
 			{
-				q_2_sample.push_back(q2_all[j]);
+				reset_clone_net();
 			}
-			float q2_max = *std::max_element(q_2_sample.begin(), q_2_sample.end());
-			float target = abs(transition.r + q2_max * discount_);
-			targets.push_back(target);
-			dummy_input.push_back(0.0);
-		}
 
-		// Set targets
-		target_input_layer_->Reset(const_cast<float*>(targets.data()),
-								dummy_input.data(), minibatch_size_);
+			// Forward s2
+			auto is_s1 = false;
+			std::vector<float> targets_dummy(num_actions_ * minibatch_size_);
+			auto q2_all = feed_net(transistion_sample, clone_net_, is_s1, targets_dummy);
 
+			// Get targets
+			std::vector<float> targets(num_actions_ * minibatch_size_);
+			std::fill(targets.begin(), targets.end(), 0.0f);
+			for(int i = 0; i < minibatch_size_; i++)
+			{
+				Transition transition = transistion_sample[i];
+				std::vector<float> q_2_sample;
+				for(int j = i * num_actions_; j < ((i+1) * num_actions_); j++)
+				{
+					q_2_sample.push_back(q2_all[j]);
+				}
+				float q2_max = *std::max_element(q_2_sample.begin(), q_2_sample.end());
+				float target = abs(transition.r + q2_max * discount_);
+				targets[i * num_actions_ + transition.a] = target;
+			}
 
-//		// TODO: Delete after figuring out why loss is zero on Q1 pass
-//		auto q1_all = net_->blob_by_name("gtanet_q_values")->cpu_data();
-//		auto q1_out = net_->blob_by_name("action_q_value")->cpu_data();
+	//		// TODO: Delete after figuring out why loss is zero on Q1 pass
+	//		auto q1_all = net_->blob_by_name("gtanet_q_values")->cpu_data();
+	//		auto q1_out = net_->blob_by_name("action_q_value")->cpu_data();
 
-		// Forward s1
-		is_s1 = true;
-		forward(transistion_sample, net_, is_s1);
+			// Set s1
+			is_s1 = true;
+			feed_net(transistion_sample, net_, is_s1, targets);
 
-		//solver_->OnlineUpdate();
-		solver_->Step(1);
+			//solver_->OnlineUpdate();
 
-		// TODO: Backprop avg. delta as top gradient for all actions
-		// TODO: Apply regularizer (weight cost?) by picking an SGD type like Adagrad
-		// TODO: Step the learning rate down when loss goes down, or use Caffe's built-in stepsize by setting loss appropriately somewhere.
-		// 
-		set_batch_size(1);
-		if(should_train_async_)
-		{
-			release_queue_lock();
-		}
+			// TODO: Backprop avg. delta as top gradient for all actions
+			// TODO: Apply regularizer (weight cost?) by picking an SGD type like Adagrad
+			// TODO: Step the learning rate down when loss goes down, or use Caffe's built-in stepsize by setting loss appropriately somewhere.
+			// 
+			set_batch_size(1);
+			if(should_train_async_)
+			{
+				release_queue_lock();
+			}			
+		//}
 	}
 };
 
@@ -417,7 +428,6 @@ inline int NeuralQLearner::select_action_e_greedy(double epsilon)
 	}
 	else
 	{
-		// Convert array to vector
 		std::vector<int> best_actions;
 
 		float max_q = std::numeric_limits<double>::min();
@@ -475,21 +485,21 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	set_action_vector(action, actions);
 	std::vector<float> labels2(num_actions_);
 	std::fill(labels2.begin(), labels2.end(), 0.0f);
-	action_input_layer_->Reset(&actions[0], &labels2[0], 1);
-	target_input_layer_->Reset(&target_input[0], &labels2[0], 1);
+	action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
+	target_input_layer_->Reset(&target_input[0], &labels2[0], minibatch_size_);
 
 	try
 	{
 		// Net forward
-		const std::vector<caffe::Blob<float>*> & results = net_->ForwardPrefilled(nullptr);
-		const float* out_array = results[0]->cpu_data();
+		net_->ForwardPrefilled(nullptr);
+		const float * out_array = net_->blob_by_name("gtanet_q_values")->cpu_data(); // TODO store blob object and reuse pointer
+//		const float* out_array = results[0]->cpu_data();
 		// Store results in prev_results
 		last_q_values_.erase(last_q_values_.begin(), last_q_values_.end());
 		for(int i = 0; i < num_actions_; i++)
 		{
 			last_q_values_.push_back(out_array[i]);
 		}
-
 		action = select_action_e_greedy(epsilon);
 	}
 	catch(...)
@@ -524,7 +534,6 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				QLearnMinibatch();
 			}
-			
 		}
 	}
 

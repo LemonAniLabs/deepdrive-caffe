@@ -38,16 +38,6 @@ void EltwiseLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   Dtype* top_data = top[0]->mutable_gpu_data();
   switch (op_) {
   case EltwiseParameter_EltwiseOp_PROD:
-	
-	bottom[0]->gpu_data(); // TODO: delete me
-	
-
-
-	bottom[1]->gpu_data(); // TODO: delete me
-
-
-
-
     caffe_gpu_mul(count, bottom[0]->gpu_data(), bottom[1]->gpu_data(),
         top_data);
     for (int i = 2; i < bottom.size(); ++i) {
