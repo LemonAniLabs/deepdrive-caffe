@@ -18,6 +18,7 @@
 #include <include/caffe/layers/eltwise_layer.hpp>
 #include <include/caffe/util/upgrade_proto.hpp>
 #include <include/caffe/layers/reshape_layer.hpp>
+#include "dqn.h"
 
 // set caffe root path manually
 const std::string CAFFE_ROOT = "../caffe";
@@ -65,12 +66,16 @@ class NeuralQLearner
 	int clone_iter_;
 	long iter_ = 0;
 	double discount_;
+	bool exploit_;
+	SharedAgentControlData* shared_agent_control_;
+	SharedRewardData* shared_reward_;
 
 	public:
 	NeuralQLearner(int state_dim, int replay_memory, int minibatch_size,
-		int n_actions, double discount, double q_learning_rate,
+		int n_actions, double discount,
 		std::string solver_path, bool is_training, int train_iter,
-		bool should_train_async, int clone_iter)
+		bool should_train_async, int clone_iter, bool exploit, SharedAgentControlData* shared_agent_control,
+		SharedRewardData* shared_reward)
 	{
 		transitions_ = new TransitionQueue(state_dim, replay_memory);
 		minibatch_size_ = minibatch_size;
@@ -81,6 +86,9 @@ class NeuralQLearner
 		should_train_async_ = should_train_async;
 		train_iter_ = train_iter;
 		clone_iter_ = clone_iter;
+		exploit_ = exploit;
+		shared_agent_control_ = shared_agent_control;
+		shared_reward_ = shared_reward;
 
 		for(auto i = 0; i < n_actions; i++)
 		{
@@ -133,8 +141,8 @@ class NeuralQLearner
 		clone_net_.reset(new caffe::Net<float>(net_param));
 		reset_clone_net();
 
-		net_->set_debug_info(true);
-		clone_net_->set_debug_info(true);
+		net_->set_debug_info(false);
+		clone_net_->set_debug_info(false);
 
 		// solver_->OnlineUpdateSetup(nullptr);
 	}
@@ -299,14 +307,12 @@ class NeuralQLearner
 		}
 	}
 
-	void purge_old_transitions()
+	void purge_old_transitions(int keep_count)
 	{
-		if (transitions_->size() > replay_memory_)
+		if (transitions_->size() > keep_count)
 		{
-			// Make a best effort to keep transitions_ at hist_size 
-			// while holding lock for as short a time possible.
-			auto amount = transitions_->size() - replay_memory_;
-			for (auto i = 0; i < amount; i++)
+			auto num_to_purge = transitions_->size() - keep_count;
+			for (auto i = 0; i < num_to_purge; i++)
 			{
 				transitions_->release();
 			}
@@ -317,7 +323,7 @@ class NeuralQLearner
 	{
 		return (
 			(! should_train_async_ || get_queue_lock()) && 
-			(transitions_->size() > minibatch_size_)
+			(transitions_->size() >= replay_memory_)
 		);
 	}
 
@@ -335,17 +341,19 @@ class NeuralQLearner
 		// Perform a minibatch Q-learning update:
 		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
 		if( ! ready_to_learn()) { return; }
-		while(true)
+		int train_count = 0;
+		purge_old_transitions(replay_memory_);
+
+		// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
+		if(iter_ % clone_iter_ == 0)
+		{
+			reset_clone_net();
+		}
+
+		while(train_count < train_iter_)
 		{
 			set_batch_size(minibatch_size_);
-			purge_old_transitions();
 			auto transistion_sample = transitions_->sample(minibatch_size_);
-			
-			// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
-			if(iter_ % clone_iter_ == 0)
-			{
-				reset_clone_net();
-			}
 
 			// Forward s2
 			auto is_s1 = false;
@@ -386,8 +394,16 @@ class NeuralQLearner
 			if(should_train_async_)
 			{
 				release_queue_lock();
-			}			
+			}
+			train_count++;
 		}
+		purge_old_transitions(replay_memory_ - train_iter_);
+		(*shared_reward_).reset_agent_position = true;
+		do
+		{
+			output("Waiting to reset position...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_reward_).reset_agent_position == true);
 	}
 };
 
@@ -423,7 +439,8 @@ inline void train_minibatch_thread(NeuralQLearner* self)
 inline int NeuralQLearner::select_action_e_greedy(double epsilon)
 {
 	int action;
-	if(last_q_values_.size() == 0 || get_random_double(0, 1) < epsilon)
+	if( (iter_ < train_iter_ || ! exploit_) &&
+		(last_q_values_.size() == 0 || get_random_double(0, 1) < epsilon))
 	{
 		action = *select_randomly(actions_.begin(), actions_.end());
 	}
@@ -431,7 +448,7 @@ inline int NeuralQLearner::select_action_e_greedy(double epsilon)
 	{
 		std::vector<int> best_actions;
 
-		float max_q = std::numeric_limits<double>::min();
+		float max_q = -std::numeric_limits<double>::max();
 		int max_q_i = -1;
 		for (auto i = 0; i < last_q_values_.size(); i++) {
 			if(last_q_values_[i] > max_q)
@@ -465,6 +482,10 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	// TODO: Store entire transition: s, a, r, s'
 	if(last_state_ != nullptr && should_train_)
 	{
+		if(iter_ != 0 && iter_ % replay_memory_ == 0)
+		{
+			purge_old_transitions(replay_memory_);
+		}
 		transitions_->add(last_state_, last_action_, reward, last_terminal_);
 	}
 
@@ -511,6 +532,12 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 		action = last_action_;
 	}
 
+	if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
+	{
+		// Next iteration will be training, go to sleep by setting action to no-op
+		action = 0;
+	}
+
 	if(should_train_ && iter_ % train_iter_ == 0)
 	{
 		if(should_train_async_)
@@ -541,6 +568,8 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	if(iter_  % 1000 == 0)
 	{
 		LOG(INFO) << "iteration: " << iter_;
+		LOG(INFO) << "epsilon: " << epsilon;
+		LOG(INFO) << "reward: " << reward;
 	}
 
 

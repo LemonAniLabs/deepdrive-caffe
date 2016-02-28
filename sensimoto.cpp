@@ -27,6 +27,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include "dqn/NeuralQLearner.h"
+#include "dqn/dqn.h"
 #include <codecvt>
 #include <locale>
 
@@ -40,6 +41,8 @@
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 #include <future>
+
+using namespace dqn;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -130,6 +133,8 @@ void showImage(cv::Mat img);
 float previousDistance = std::numeric_limits<float>::min();
 float previouslyTraveled = std::numeric_limits<float>::min();
 
+auto kStepDuration = std::chrono::milliseconds(250);
+
 // the WindowProc function prototype
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -151,13 +156,6 @@ bool GetCaptureInfo(SharedTexData& ci);
 // end sensor shared memory
 
 // Agent control shared memory
-
-#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
-struct SharedAgentControlData
-{
-	INT32 action;
-};
-
 HANDLE agentControlFileMap;
 LPBYTE lpAgentControlSharedMemory = NULL;
 
@@ -182,6 +180,8 @@ void InitializeSharedAgentControlMemory(SharedAgentControlData **agentControlDat
     }
 
     *agentControlData = reinterpret_cast<SharedAgentControlData*>(lpAgentControlSharedMemory);
+	(**agentControlData).paused = true;
+
 //    (*agentControlData)->frameTime = 0;
 
 }
@@ -201,14 +201,6 @@ void DestroyAgentControlSharedMemory()
 // end agent control shared memory
 
 // Reward shared memory
-
-#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
-
-struct SharedRewardData
-{
-	INT32 distance;
-	bool on_road;
-};
 
 SharedRewardData* get_shared_reward_data()
 {
@@ -234,12 +226,6 @@ SharedRewardData* get_shared_reward_data()
 
 // end shared reward data
 
-void output(const char* out_string)
-{
-	OutputDebugStringA(out_string);
-	LOG(INFO) << out_string;
-}
-
 float get_reward(SharedRewardData* rewardData)
 {
 	int distance = (*rewardData).distance;
@@ -255,7 +241,7 @@ float get_reward(SharedRewardData* rewardData)
 
 	if(on_road && traveled > 0)
 	{
-		reward = 1; // Onward.
+		reward = 0.7; // Onward.
 	}
 	else if(on_road && traveled == 0)
 	{
@@ -281,7 +267,7 @@ float get_reward(SharedRewardData* rewardData)
 	if(traveled > previouslyTraveled)
 	{
 		// if traveled further, we're speeding up, so give 0.1 boost.
-		reward += 0.1;
+		reward += 0.3;
 	}
 
 	// Max reward: 1.1
@@ -300,6 +286,7 @@ void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner)
 		try
 		{
 			neural_q_learner->load_weights("examples/dqn/bvlc_reference_caffenet.caffemodel");
+//			neural_q_learner->load_weights("caffe_dqn_train_iter_60000.caffemodel");
 			weights_loaded = true;
 		}
 		catch(...)
@@ -310,14 +297,9 @@ void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner)
 	}
 }
 
-void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
+void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing, 
+	SharedAgentControlData* shared_agent_control, SharedRewardData* shared_reward)
 {
-	// Frames are about 100k. So this adds up fast.
-	auto replay_memory = 16;//10000;
-
-	// Needs to be fast enough to act between batches.
-	auto minibatch_size = 16;
-
 	// Number of actions
 	// 0 None
 	// 1 Left forward
@@ -327,22 +309,25 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing)
 	// 5 Forward
 	// 6 Backward
 
-	auto n_actions = 7;
+	
+	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
+	auto minibatch_size =16; // Needs to be fast enough to act between batches.
+	auto n_actions = 7; // Also specified in model proto.
 	double discount = 0.99;
-	double q_learning_rate = 0.00025;
 	bool should_train = true;
-	bool should_load_pretrained = false;
-	int train_iter = 16; // Will need to tune to memory limits. // TODO: mem
 	bool should_train_async = false;
-	int clone_iter = 10000;
+	bool should_load_pretrained = true;
+	int train_iter = 1000;
+	int clone_iter = 1000;
+	bool exploit = false;
 
 	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
 	auto state_dimension = 1;
 
 	neural_q_learner = new dqn::NeuralQLearner(state_dimension, 
-		replay_memory, minibatch_size, n_actions, discount, q_learning_rate,
+		replay_memory, minibatch_size, n_actions, discount,
 		"examples/dqn/dqn_solver.prototxt", should_train, train_iter,
-		should_train_async, clone_iter);
+		should_train_async, clone_iter, exploit, shared_agent_control, shared_reward);
 
 	// Fine tune
 	if(should_load_pretrained)
@@ -360,15 +345,20 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	// Logs are in user folder AppData/Local/temp
 	google::InitGoogleLogging("caffe.exe");
 
-	SharedRewardData* rewardData = nullptr; 
-	while (rewardData == nullptr) {
+	SharedRewardData* shared_reward_data = nullptr; 
+	while (shared_reward_data == nullptr) {
 		output("Trying to access shared reward data...");
-		rewardData = get_shared_reward_data();
+		shared_reward_data = get_shared_reward_data();
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 	}
 
-	SharedAgentControlData* agentControlData;
-	InitializeSharedAgentControlMemory(&agentControlData);
+	SharedAgentControlData* agent_control_data;
+	InitializeSharedAgentControlMemory(&agent_control_data);
+
+	while ((*agent_control_data).paused) {
+		output("Waiting for AutoIt to respond...");
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	}
 
 	HWND hWnd;
 	WNDCLASSEX wc;
@@ -417,14 +407,14 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	bool is_terminal = false;
 	bool is_testing = false;
 	double epsilon = 1.0;
-	double epsilon_end = 0.0; // Game is not deterministic like ALE. Full explotation is not cheating.
+	double epsilon_end = 0.0; // Game is not deterministic like ALE. Full explotation okay.
 
 	// 10 actions a second for 10 hours. 
 	double epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
 
 	if(!should_skip_dqn)
 	{
-		init_dqn(neuralQLearner, is_testing);
+		init_dqn(neuralQLearner, is_testing, agent_control_data, shared_reward_data);
 	}
 
 	// enter the main loop:
@@ -433,6 +423,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	while (true)
 	{
+		auto start_time = std::chrono::high_resolution_clock::now();
 		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
 			TranslateMessage(&msg);
@@ -453,19 +444,32 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 		if(screen == nullptr)
 		{
-			LOG(INFO) << "Could not get screen, skipping..";
+			output("Could not get screen, skipping..");
 		}
 		else if(should_skip_dqn)
 		{
-			LOG(INFO) << "skip_dqn set, skipping dqn...";
+			output("skip_dqn set, skipping dqn...");
+			delete screen;
+		}
+		else if((*agent_control_data).paused)
+		{
+			output("Perception paused, skipping...");
 			delete screen;
 		}
 		else
 		{
-			reward = get_reward(rewardData); // TODO: Make sure there are no reward "spikes". Will cause 'sploding.
+			reward = get_reward(shared_reward_data); // TODO: Make sure there are no reward "spikes". Will cause 'sploding.
 			auto action_index = neuralQLearner->perceive(reward, screen, is_terminal, 
 				is_testing, epsilon);
-			(*agentControlData).action = action_index;
+			(*agent_control_data).action = action_index;
+			(*agent_control_data).step = step;
+
+			typedef std::chrono::milliseconds ms;
+			typedef std::chrono::duration<float> fsec;
+			auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+			auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+			auto extra_wait = kStepDuration - elapsed_ms;
+			std::this_thread::sleep_for(extra_wait);
 			step++;
 			if(epsilon > epsilon_end)
 			{
@@ -483,8 +487,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		// Save the net with best performance.
 	}
 
-	delete rewardData;
-	delete agentControlData;
+	delete shared_reward_data;
+	delete agent_control_data;
 
 	// clean up DirectX and COM
 	Cleanup();

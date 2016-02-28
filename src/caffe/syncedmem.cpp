@@ -11,7 +11,7 @@ SyncedMemory::~SyncedMemory() {
 	std::chrono::milliseconds span (1);
 	if(fut.wait_for(span) == std::future_status::timeout)
 	{
-		LOG(INFO) << "Timeout waiting for synced memory to clear. shape_data issue?";
+		//LOG(INFO) << "Timeout waiting for synced memory to clear. shape_data issue?";
 	}
 //	CaffeFreeHost(cpu_ptr_, cpu_malloc_use_cuda_);
   }

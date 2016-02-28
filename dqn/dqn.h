@@ -24,9 +24,29 @@
 //}
 
 namespace dqn{
+	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
+	struct SharedAgentControlData
+	{
+		INT32 action;
+		BOOLEAN paused;
+		LONGLONG step;
+	};
+
+	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
+
+	struct SharedRewardData
+	{
+		INT32 distance;
+		bool on_road;
+		bool reset_agent_position;
+	};
 
 
-
+	void output(const char* out_string)
+	{
+		OutputDebugStringA(out_string);
+		LOG(INFO) << out_string;
+	}
 }
 
 #endif  // DQN_H
