@@ -73,6 +73,7 @@ class SolverRegistry {
   static Solver<Dtype>* CreateSolver(const SolverParameter& param) {
     const string& type = param.type();
     CreatorRegistry& registry = Registry();
+
     CHECK_EQ(registry.count(type), 1) << "Unknown solver type: " << type
         << " (known types: " << SolverTypeListString() << ")";
     return registry[type](param);

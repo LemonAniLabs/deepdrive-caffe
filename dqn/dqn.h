@@ -28,17 +28,18 @@ namespace dqn{
 	struct SharedAgentControlData
 	{
 		INT32 action;
-		BOOLEAN paused;
+		bool paused;
 		LONGLONG step;
+		bool should_reload_game;
 	};
 
 	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
 
 	struct SharedRewardData
 	{
-		INT32 distance;
+		double distance;
 		bool on_road;
-		bool reset_agent_position;
+		bool should_reset_agent;
 	};
 
 

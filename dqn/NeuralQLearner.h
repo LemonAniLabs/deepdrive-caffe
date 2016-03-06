@@ -175,6 +175,7 @@ class NeuralQLearner
 		clone_input_layers_.push_back(clone_frames_input_layer_);
 		clone_input_layers_.push_back(clone_target_input_layer_);
 		clone_input_layers_.push_back(clone_action_input_layer_);
+		output("Cloned net");
 	}
 
 	void load_weights(std::string model_file)
@@ -272,6 +273,7 @@ class NeuralQLearner
 			// Forward to train net
 			frames_input_layer_->AddMatVector(frames, labels);
 			action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
+
 			target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
 
 			LOG(INFO) << "Real loss";
@@ -323,7 +325,7 @@ class NeuralQLearner
 	{
 		return (
 			(! should_train_async_ || get_queue_lock()) && 
-			(transitions_->size() >= replay_memory_)
+			(transitions_->size() >= minibatch_size_)
 		);
 	}
 
@@ -336,15 +338,32 @@ class NeuralQLearner
 		}
 	}
 
-	void QLearnMinibatch()
+	void reset_agent()
 	{
-		// Perform a minibatch Q-learning update:
-		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
-		if( ! ready_to_learn()) { return; }
+		(*shared_reward_).should_reset_agent = true;
+		do
+		{
+			output("Waiting to reset position...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_reward_).should_reset_agent == true);
+	}
+
+	void wait_to_reload_game()
+	{
+		do
+		{
+			output("Waiting to reload game...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_agent_control_).should_reload_game == true);
+	}
+
+	void CompleteQLearnMinibatch()
+	{
 		int train_count = 0;
 		purge_old_transitions(replay_memory_);
 
 		// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
+
 		if(iter_ % clone_iter_ == 0)
 		{
 			reset_clone_net();
@@ -376,9 +395,9 @@ class NeuralQLearner
 				targets[i * num_actions_ + transition.a] = target;
 			}
 
-	//		// TODO: Delete after figuring out why loss is zero on Q1 pass
-	//		auto q1_all = net_->blob_by_name("gtanet_q_values")->cpu_data();
-	//		auto q1_out = net_->blob_by_name("action_q_value")->cpu_data();
+			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
+			//		auto q1_all = net_->blob_by_name("gtanet_q_values")->cpu_data();
+			//		auto q1_out = net_->blob_by_name("action_q_value")->cpu_data();
 
 			// Set s1
 			is_s1 = true;
@@ -397,13 +416,20 @@ class NeuralQLearner
 			}
 			train_count++;
 		}
-		purge_old_transitions(replay_memory_ - train_iter_);
-		(*shared_reward_).reset_agent_position = true;
-		do
+	}
+
+	void QLearnMinibatch()
+	{
+		// Perform a minibatch Q-learning update:
+		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
+		(*shared_agent_control_).should_reload_game = true; // Reload while training.
+		if(ready_to_learn())
 		{
-			output("Waiting to reset position...");
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		} while ((*shared_reward_).reset_agent_position == true);
+			CompleteQLearnMinibatch();
+		}
+		purge_old_transitions(replay_memory_ - train_iter_);
+		wait_to_reload_game();
+		reset_agent();
 	}
 };
 
@@ -521,6 +547,10 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 		for(int i = 0; i < num_actions_; i++)
 		{
 			last_q_values_.push_back(out_array[i]);
+			if(iter_ % 40 == 0)
+			{
+				LOG(INFO) << "q values " << i << " = " << out_array[i];
+			}
 		}
 		action = select_action_e_greedy(epsilon);
 	}
@@ -565,7 +595,7 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 		}
 	}
 
-	if(iter_  % 1000 == 0)
+	if(iter_  % 100 == 0)
 	{
 		LOG(INFO) << "iteration: " << iter_;
 		LOG(INFO) << "epsilon: " << epsilon;

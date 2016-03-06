@@ -130,8 +130,8 @@ bool cudaCopyBackBufferToMemory(ID3D11Texture2D* pSurface, BYTE *& imcopy);
 cv::Mat* get_screen();
 void showImage(cv::Mat img);
 
-float previousDistance = std::numeric_limits<float>::min();
-float previouslyTraveled = std::numeric_limits<float>::min();
+double previousDistance = std::numeric_limits<double>::min();
+double previouslyTraveled = std::numeric_limits<double>::min();
 
 auto kStepDuration = std::chrono::milliseconds(250);
 
@@ -228,16 +228,16 @@ SharedRewardData* get_shared_reward_data()
 
 float get_reward(SharedRewardData* rewardData)
 {
-	int distance = (*rewardData).distance;
+	double distance = double((*rewardData).distance);
 	bool on_road = (*rewardData).on_road;
-	if(previousDistance == std::numeric_limits<float>::min())
+	if(previousDistance == std::numeric_limits<double>::min())
 	{
 		// First measurement
 		previousDistance = distance;
 		return 0;
 	}
 	float reward = 0.0;
-	int traveled = previousDistance - distance;
+	double traveled = previousDistance - distance;
 
 	if(on_road && traveled > 0)
 	{
@@ -266,11 +266,11 @@ float get_reward(SharedRewardData* rewardData)
 
 	if(traveled > previouslyTraveled)
 	{
-		// if traveled further, we're speeding up, so give 0.1 boost.
+		// We're speeding up.
 		reward += 0.3;
 	}
 
-	// Max reward: 1.1
+	// Max reward: 1
 	// Min reward -1
  
 	previousDistance = distance;
@@ -278,15 +278,14 @@ float get_reward(SharedRewardData* rewardData)
 	return reward;
 }
 
-void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner)
+void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner, std::string path)
 {
 	bool weights_loaded = false;
 	while(!weights_loaded)
 	{
 		try
 		{
-			neural_q_learner->load_weights("examples/dqn/bvlc_reference_caffenet.caffemodel");
-//			neural_q_learner->load_weights("caffe_dqn_train_iter_60000.caffemodel");
+			neural_q_learner->load_weights(path);
 			weights_loaded = true;
 		}
 		catch(...)
@@ -309,17 +308,17 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing,
 	// 5 Forward
 	// 6 Backward
 
-	
 	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
-	auto minibatch_size =16; // Needs to be fast enough to act between batches.
+	auto minibatch_size = 16; // Needs to be fast enough to act between batches.
 	auto n_actions = 7; // Also specified in model proto.
 	double discount = 0.99;
 	bool should_train = true;
 	bool should_train_async = false;
-	bool should_load_pretrained = true;
-	int train_iter = 1000;
+	bool should_load_imagenet_pretrained = false;
+	bool should_load_dqn_pretrained = true;
+	int train_iter = 75;
 	int clone_iter = 1000;
-	bool exploit = false;
+	bool exploit = true;
 
 	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
 	auto state_dimension = 1;
@@ -328,12 +327,46 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing,
 		replay_memory, minibatch_size, n_actions, discount,
 		"examples/dqn/dqn_solver.prototxt", should_train, train_iter,
 		should_train_async, clone_iter, exploit, shared_agent_control, shared_reward);
+	
+	(*shared_agent_control).should_reload_game = true;
+	neural_q_learner->wait_to_reload_game();
+	neural_q_learner->reset_agent();
 
 	// Fine tune
-	if(should_load_pretrained)
+	std::string weight_path_image_net = "examples/dqn/bvlc_reference_caffenet.caffemodel";
+//	std::string weight_path_dqn = "caffe_dqn_train_iter_20000_94_epsilon.caffemodel";
+	std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
+	if(should_load_dqn_pretrained)
 	{
-		load_pretrained_net(neural_q_learner);
+		load_pretrained_net(neural_q_learner, weight_path_dqn);
+	}	
+	else if(should_load_imagenet_pretrained)
+	{
+		load_pretrained_net(neural_q_learner, weight_path_image_net);
 	}
+}
+
+SharedAgentControlData* wait_for_auto_it_sharing()
+{
+	SharedAgentControlData* agent_control_data;
+	InitializeSharedAgentControlMemory(&agent_control_data);
+
+	while ((*agent_control_data).paused) {
+		output("Waiting for AutoIt to respond...");
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	}
+	return agent_control_data;
+}
+
+SharedRewardData* wait_for_shared_reward_data()
+{
+	SharedRewardData* shared_reward_data = nullptr;
+	while (shared_reward_data == nullptr) {
+		output("Trying to access shared reward data...");
+		shared_reward_data = get_shared_reward_data();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	}
+	return shared_reward_data;
 }
 
 // the entry point for any Windows program
@@ -345,20 +378,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	// Logs are in user folder AppData/Local/temp
 	google::InitGoogleLogging("caffe.exe");
 
-	SharedRewardData* shared_reward_data = nullptr; 
-	while (shared_reward_data == nullptr) {
-		output("Trying to access shared reward data...");
-		shared_reward_data = get_shared_reward_data();
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-	}
-
-	SharedAgentControlData* agent_control_data;
-	InitializeSharedAgentControlMemory(&agent_control_data);
-
-	while ((*agent_control_data).paused) {
-		output("Waiting for AutoIt to respond...");
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-	}
+	auto shared_agent_data = wait_for_auto_it_sharing();
+	auto shared_reward_data = wait_for_shared_reward_data();
 
 	HWND hWnd;
 	WNDCLASSEX wc;
@@ -402,7 +423,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	// DQN
 	int step = 0;
-	dqn::NeuralQLearner* neuralQLearner = nullptr;
+	dqn::NeuralQLearner* neural_q_learner = nullptr;
 	double reward = 0.0;
 	bool is_terminal = false;
 	bool is_testing = false;
@@ -412,15 +433,17 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	// 10 actions a second for 10 hours. 
 	double epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
 
+	double epsilon_resume = 0.84; // TODO: Automate
+
+	epsilon = epsilon_resume;
+
 	if(!should_skip_dqn)
 	{
-		init_dqn(neuralQLearner, is_testing, agent_control_data, shared_reward_data);
+		init_dqn(neural_q_learner, is_testing, shared_agent_data, shared_reward_data);
 	}
 
-	// enter the main loop:
-
+	// Main loop
 	MSG msg;
-
 	while (true)
 	{
 		auto start_time = std::chrono::high_resolution_clock::now();
@@ -451,7 +474,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			output("skip_dqn set, skipping dqn...");
 			delete screen;
 		}
-		else if((*agent_control_data).paused)
+		else if((*shared_agent_data).paused)
 		{
 			output("Perception paused, skipping...");
 			delete screen;
@@ -459,10 +482,10 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		else
 		{
 			reward = get_reward(shared_reward_data); // TODO: Make sure there are no reward "spikes". Will cause 'sploding.
-			auto action_index = neuralQLearner->perceive(reward, screen, is_terminal, 
+			auto action_index = neural_q_learner->perceive(reward, screen, is_terminal, 
 				is_testing, epsilon);
-			(*agent_control_data).action = action_index;
-			(*agent_control_data).step = step;
+			(*shared_agent_data).action = action_index;
+			(*shared_agent_data).step = step;
 
 			typedef std::chrono::milliseconds ms;
 			typedef std::chrono::duration<float> fsec;
@@ -488,7 +511,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	}
 
 	delete shared_reward_data;
-	delete agent_control_data;
+	delete shared_agent_data;
 
 	// clean up DirectX and COM
 	Cleanup();
@@ -514,6 +537,7 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 }
 
 UINT creationFlags = NULL;
+
 
 // this function initializes and prepares Direct3D for use
 void InitD3D(HWND hWnd)
