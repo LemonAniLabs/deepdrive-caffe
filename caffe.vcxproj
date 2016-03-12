@@ -168,7 +168,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="sensimoto.cpp" />
+    <ClCompile Include="main.cpp" />
     <ClCompile Include="src\caffe\blob.cpp" />
     <ClCompile Include="src\caffe\common.cpp" />
     <ClCompile Include="src\caffe\data_reader.cpp" />
@@ -261,8 +261,8 @@
     <ClCompile Include="src\caffe\util\math_functions.cpp" />
     <ClCompile Include="src\caffe\util\upgrade_proto.cpp" />
     <ClCompile Include="tools\caffe.cpp" />
-    <None Include="examples\dqn\dqn_model.prototxt" />
-    <None Include="examples\dqn\dqn_solver.prototxt" />
+    <None Include="examples\deep_drive\deep_drive_model.prototxt" />
+    <None Include="examples\deep_drive\deep_drive_solver.prototxt" />
     <None Include="tools\compute_image_mean.cpp" />
     <None Include="tools\convert_imageset.cpp" />
     <None Include="tools\device_query.cpp" />
@@ -346,8 +346,8 @@
     <None Include="tools\extra\summarize.py" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="dqn\dqn.h" />
-    <ClInclude Include="dqn\NeuralQLearner.h" />
+    <ClInclude Include="deep_drive\AgentNet.h" />
+    <ClInclude Include="deep_drive\deep_drive.h" />
     <ClInclude Include="dqn\TransitionQueue.h" />
     <ClInclude Include="helper_cuda.h" />
     <ClInclude Include="helper_string.h" />

@@ -1,6 +1,6 @@
 #pragma once
-#ifndef DQN_NEURAL_Q_LEANER_H
-#define DQN_NEURAL_Q_LEANER_H
+#ifndef AGENT_NET_H
+#define AGENT_NET_H
 
 #define GLOG_NO_ABBREVIATED_SEVERITIES
 
@@ -18,17 +18,17 @@
 #include <include/caffe/layers/eltwise_layer.hpp>
 #include <include/caffe/util/upgrade_proto.hpp>
 #include <include/caffe/layers/reshape_layer.hpp>
-#include "dqn.h"
+#include "deep_drive.h"
 
 // set caffe root path manually
 const std::string CAFFE_ROOT = "../caffe";
 
-namespace dqn
+namespace deep_drive
 {
 
 // void train_minibatch_thread(void* neural_q_learner);
 
-class NeuralQLearner
+class AgentNet
 {
 	TransitionQueue* transitions_;
 	int minibatch_size_;  // Needs to be fast enough to act between batches.
@@ -40,55 +40,47 @@ class NeuralQLearner
 	boost::shared_ptr<caffe::Blob<float>> frames_input_blob_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> frames_input_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> target_input_layer_;
-	boost::shared_ptr<caffe::MemoryDataLayer<float>> action_input_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> reshape_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_frames_input_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_target_input_layer_;
-	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_action_input_layer_;
-	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_reshape_layer_;
 	std::vector<boost::shared_ptr<caffe::MemoryDataLayer<float>>> input_layers_;
 	std::vector<boost::shared_ptr<caffe::MemoryDataLayer<float>>> clone_input_layers_;
-	int num_actions_;
+	int num_output_;
 	std::vector<int> actions_;
 	cv::Mat* last_state_;
-	int      last_action_;
-	float    last_reward_;
-	bool     last_terminal_;
+	Action   last_action_;
 	int raw_frame_width_ = 771;
 	int frame_area_ = raw_frame_width_ * raw_frame_width_;
 	int sample_frame_count_ = 4;
 	int sample_data_size_ = frame_area_ * sample_frame_count_;
 	int minibatch_data_size_ = sample_data_size_ * minibatch_size_;
-	std::vector<float> last_q_values_;
 	bool should_train_;
 	bool should_train_async_;
+	bool should_manually_set_acceleration_;
 	int train_iter_;
 	int clone_iter_;
 	long iter_ = 0;
-	double discount_;
-	bool exploit_;
 	SharedAgentControlData* shared_agent_control_;
 	SharedRewardData* shared_reward_;
 
 	public:
-	NeuralQLearner(int state_dim, int replay_memory, int minibatch_size,
-		int n_actions, double discount,
-		std::string solver_path, bool is_training, int train_iter,
-		bool should_train_async, int clone_iter, bool exploit, SharedAgentControlData* shared_agent_control,
+	AgentNet(int state_dim, int replay_memory, int minibatch_size,
+		int n_actions, std::string solver_path, bool is_training, int train_iter,
+		bool should_train_async, bool should_manually_set_acceleration,
+		int clone_iter, SharedAgentControlData* shared_agent_control,
 		SharedRewardData* shared_reward)
 	{
 		transitions_ = new TransitionQueue(state_dim, replay_memory);
 		minibatch_size_ = minibatch_size;
 		replay_memory_ = replay_memory;
-		num_actions_ = n_actions;
-		discount_ = discount;
-		should_train_ = is_training;
+		num_output_ = n_actions;
+		should_train_ = is_training; // TODO: Change to should_train
 		should_train_async_ = should_train_async;
 		train_iter_ = train_iter;
 		clone_iter_ = clone_iter;
-		exploit_ = exploit;
 		shared_agent_control_ = shared_agent_control;
 		shared_reward_ = shared_reward;
+		should_manually_set_acceleration_ = should_manually_set_acceleration;
 
 		for(auto i = 0; i < n_actions; i++)
 		{
@@ -119,25 +111,17 @@ class NeuralQLearner
 		target_input_layer_ =
 			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
 				net_->layer_by_name("target_input_layer"));
-		action_input_layer_ =
-			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-				net_->layer_by_name("action_input_layer"));
-//		reshape_layer_ =
-//			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
-//				net_->layer_by_name("reshape"));
 
 
  		assert(frames_input_layer_);
 		assert(target_input_layer_);
-		assert(action_input_layer_);
 //		assert(reshape_layer_);
 
 		input_layers_.push_back(frames_input_layer_);
 		input_layers_.push_back(target_input_layer_);
-		input_layers_.push_back(action_input_layer_);
 
 		caffe::NetParameter net_param;
-		ReadNetParamsFromTextFileOrDie("examples/dqn/dqn_model.prototxt", &net_param);
+		ReadNetParamsFromTextFileOrDie("examples/deep_drive/deep_drive_model.prototxt", &net_param);
 		clone_net_.reset(new caffe::Net<float>(net_param));
 		reset_clone_net();
 
@@ -160,21 +144,16 @@ class NeuralQLearner
 		clone_target_input_layer_ =
 			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
 				clone_net_->layer_by_name("target_input_layer"));
-		clone_action_input_layer_ =
-			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-				clone_net_->layer_by_name("action_input_layer"));
 //		clone_reshape_layer_ =
 //			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
 //				net_->layer_by_name("reshape"));
 
  		assert(clone_frames_input_layer_);
 		assert(clone_target_input_layer_);
-		assert(clone_action_input_layer_);
 //		assert(clone_reshape_layer_);
 
 		clone_input_layers_.push_back(clone_frames_input_layer_);
 		clone_input_layers_.push_back(clone_target_input_layer_);
-		clone_input_layers_.push_back(clone_action_input_layer_);
 		output("Cloned net");
 	}
 
@@ -183,7 +162,7 @@ class NeuralQLearner
 		net_->CopyTrainedLayersFrom(CAFFE_ROOT + "/" + model_file);
 	}
 
-	~NeuralQLearner()
+	~AgentNet()
 	{
 		delete transitions_;
 		net_.reset();
@@ -200,8 +179,7 @@ class NeuralQLearner
 
 	int select_action_e_greedy(double epsilon);
 
-	int perceive(float reward, cv::Mat* raw_state, bool terminal, 
-		bool testing, double epsilon);
+	Action Perceive(cv::Mat* raw_state, Action action);
 
 	bool get_queue_lock()
 	{
@@ -223,7 +201,7 @@ class NeuralQLearner
 
 	void set_action_vector(int action_index, std::vector<float> & actions)
 	{
-		for(int i = 0; i < num_actions_; i++)
+		for(int i = 0; i < num_output_; i++)
 		{
 			if(i == action_index)
 			{
@@ -236,8 +214,8 @@ class NeuralQLearner
 		}		
 	}
 
-	std::vector<float> feed_net(std::vector<Transition>& transistion_sample, 
-		boost::shared_ptr<caffe::Net<float>> net, bool is_s1, std::vector<float> &targets)
+	void FeedNet(std::vector<Transition>& transistion_sample, 
+		boost::shared_ptr<caffe::Net<float>> net,std::vector<float> &targets)
 	{
 		std::vector<cv::Mat> frames;
 		std::vector<float> actions;
@@ -245,9 +223,12 @@ class NeuralQLearner
 		for (auto i = 0; i < minibatch_size_; i++)
 		{
 			Transition transition = transistion_sample[i];
-			if(is_s1) frames.push_back(*(transition.s));
-			else      frames.push_back(*(transition.s2));
-			set_action_vector(transition.a, actions);
+			frames.push_back(*(transition.image));
+			// TODO: Set heading vector
+			// TODO: Set speed vector
+//			set_action_vector(transition.a, actions);
+
+
 			// Frame input size is minibatch * frames_per_sample * sizeof(cv::Mat == w * h)
 			// TODO: Set input channels with four consecutive frames.
 		}
@@ -266,47 +247,20 @@ class NeuralQLearner
 		// Could just do Reset()...
 
 		const float* out_array;
-		if(is_s1)
-		{
-			std::vector<float> dummy_input;
-			// Get actuals - Q1
-			// Forward to train net
-			frames_input_layer_->AddMatVector(frames, labels);
-			action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
 
-			target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
+		std::vector<float> dummy_input;
+		// Get actuals
+		frames_input_layer_->AddMatVector(frames, labels);
+		target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
+		solver_->Step(1);
+		auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_output_);
+		auto check_fctop = array_to_vec(net->blob_by_name("gtanet_fctop")->cpu_data(), minibatch_size_ * num_output_);
 
-			LOG(INFO) << "Real loss";
+		return;
+//		auto results = net->output_blobs();
+//		out_array = results[0]->cpu_data();
+//		return array_to_vec(out_array, 1);
 
-//			auto loss = net->ForwardPrefilled();
-			solver_->Step(1);
-
-			auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_actions_);
-			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
-			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
-			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
-
-			std::vector<float> blank;
-			return blank;
-			auto results = net->output_blobs();
-			out_array = results[0]->cpu_data();
-			return array_to_vec(out_array, 1);
-		}
-		else
-		{
-			// Get targets - Q2
-			// Forward to target/clone net (could replace net with memoized hash(input) -> output)
-			// Analogous to memory of reward stored separately from experience processing. Cortex / Hippocampus
-			clone_frames_input_layer_->AddMatVector(frames, labels);
-			clone_action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
-			clone_target_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_); // Placeholder, we get layer before loss for targets
-			net->ForwardPrefilled(nullptr);
-			out_array = net->blob_by_name("gtanet_q_values")->cpu_data(); // TODO store blob object and reuse pointer
-			auto check_q_values = array_to_vec(net->blob_by_name("gtanet_q_values")->cpu_data(), minibatch_size_ * num_actions_);
-			auto check_reshape = array_to_vec(net->blob_by_name("gtanet_q_values_reshape")->cpu_data(), minibatch_size_ * num_actions_);
-			auto check_eltwise = array_to_vec(net->blob_by_name("action_q_value")->cpu_data(), minibatch_size_ * num_actions_);
-			return array_to_vec(out_array, minibatch_size_ * num_actions_);
-		}
 	}
 
 	void purge_old_transitions(int keep_count)
@@ -348,6 +302,16 @@ class NeuralQLearner
 		} while ((*shared_reward_).should_reset_agent == true);
 	}
 
+	void wait_to_toggle_pause_game()
+	{
+		(*shared_agent_control_).should_toggle_pause_game = true;
+		do
+		{
+			output("Waiting to pause game...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_agent_control_).should_toggle_pause_game == true);
+	}
+
 	void wait_to_reload_game()
 	{
 		do
@@ -357,7 +321,7 @@ class NeuralQLearner
 		} while ((*shared_agent_control_).should_reload_game == true);
 	}
 
-	void CompleteQLearnMinibatch()
+	void CompleteLearning()
 	{
 		int train_count = 0;
 		purge_old_transitions(replay_memory_);
@@ -374,34 +338,26 @@ class NeuralQLearner
 			set_batch_size(minibatch_size_);
 			auto transistion_sample = transitions_->sample(minibatch_size_);
 
-			// Forward s2
-			auto is_s1 = false;
-			std::vector<float> targets_dummy(num_actions_ * minibatch_size_);
-			auto q2_all = feed_net(transistion_sample, clone_net_, is_s1, targets_dummy);
+			std::vector<float> targets_dummy(num_output_ * minibatch_size_);
 
 			// Get targets
-			std::vector<float> targets(num_actions_ * minibatch_size_);
+			std::vector<float> targets(num_output_ * minibatch_size_);
+			// TODO: Set targets
+
 			std::fill(targets.begin(), targets.end(), 0.0f);
 			for(int i = 0; i < minibatch_size_; i++)
 			{
 				Transition transition = transistion_sample[i];
 				std::vector<float> q_2_sample;
-				for(int j = i * num_actions_; j < ((i+1) * num_actions_); j++)
-				{
-					q_2_sample.push_back(q2_all[j]);
-				}
-				float q2_max = *std::max_element(q_2_sample.begin(), q_2_sample.end());
-				float target = abs(transition.r + q2_max * discount_);
-				targets[i * num_actions_ + transition.a] = target;
+				targets[i * num_output_    ] = transition.heading_change;
+				targets[i * num_output_ + 1] = transition.speed_change;
 			}
 
 			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
 			//		auto q1_all = net_->blob_by_name("gtanet_q_values")->cpu_data();
 			//		auto q1_out = net_->blob_by_name("action_q_value")->cpu_data();
 
-			// Set s1
-			is_s1 = true;
-			feed_net(transistion_sample, net_, is_s1, targets);
+			FeedNet(transistion_sample, net_, targets);
 
 			//solver_->OnlineUpdate();
 
@@ -418,18 +374,69 @@ class NeuralQLearner
 		}
 	}
 
-	void QLearnMinibatch()
+	void Learn()
 	{
 		// Perform a minibatch Q-learning update:
 		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
-		(*shared_agent_control_).should_reload_game = true; // Reload while training.
+//		(*shared_agent_control_).should_reload_game = true; // Reload while training.
+		bool learned = false;
 		if(ready_to_learn())
 		{
-			CompleteQLearnMinibatch();
+			wait_to_toggle_pause_game();
+			CompleteLearning();
+			learned = true;
 		}
 		purge_old_transitions(replay_memory_ - train_iter_);
-		wait_to_reload_game();
-		reset_agent();
+//		reset_agent();
+		if(learned)
+		{
+			wait_to_toggle_pause_game();
+		}
+
+	}
+
+	void Act(SharedAgentControlData* shared_agent_data, SharedRewardData* shared_reward_data, Action action)
+	{
+//		LOG(INFO) << "heading change: " << action.heading_change;
+//		LOG(INFO) << "speed change: " << action.speed_change;
+
+		float new_heading = shared_reward_data->heading + action.heading_change;
+		float new_speed = shared_reward_data->speed + action.speed_change;
+		float heading_margin = 0.001;
+		float speed_margin = 0.001;
+		(*shared_agent_data).heading_achieved = false;
+		(*shared_agent_data).speed_achieved = false;
+
+		if(should_manually_set_acceleration_)
+		{
+			(*shared_reward_data).desired_heading = new_heading;
+			(*shared_reward_data).desired_speed = new_speed;
+		}
+
+		do
+		{
+			if(abs(shared_reward_data->heading - new_heading) >= heading_margin)
+			{
+				(*shared_agent_data).heading_change = shared_reward_data->heading - new_heading;
+			}
+			else
+			{
+				(*shared_agent_data).heading_achieved = true;
+			}
+
+			if(abs(shared_reward_data->speed - new_speed) >= speed_margin)
+			{
+				(*shared_agent_data).speed_change = shared_reward_data->speed - new_speed;
+			}
+			else
+			{
+				(*shared_agent_data).speed_achieved = true;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+			// TODO: Need to have some timeout here, sync with the 250ms step time of main.cpp
+
+		} while( ! shared_agent_data->heading_achieved || ! shared_agent_data->speed_achieved);
 	}
 };
 
@@ -456,54 +463,12 @@ inline double get_random_double(float start, float end)
 }
 
 // The function we want to execute on the new thread.
-inline void train_minibatch_thread(NeuralQLearner* self)
+inline void train_minibatch_thread(AgentNet* self)
 {
-	self->QLearnMinibatch();
+	self->Learn();
 }
 
-
-inline int NeuralQLearner::select_action_e_greedy(double epsilon)
-{
-	int action;
-	if( (iter_ < train_iter_ || ! exploit_) &&
-		(last_q_values_.size() == 0 || get_random_double(0, 1) < epsilon))
-	{
-		action = *select_randomly(actions_.begin(), actions_.end());
-	}
-	else
-	{
-		std::vector<int> best_actions;
-
-		float max_q = -std::numeric_limits<double>::max();
-		int max_q_i = -1;
-		for (auto i = 0; i < last_q_values_.size(); i++) {
-			if(last_q_values_[i] > max_q)
-			{
-				max_q = last_q_values_[i];
-				best_actions.clear();
-				best_actions.push_back(i);
-			}
-			else if(last_q_values_[i] == max_q)
-			{
-				best_actions.push_back(i);
-			}
-		}
-
-		if(best_actions.size() > 1)
-		{
-			action = *select_randomly(best_actions.begin(), best_actions.end());					
-		} 
-		else
-		{
-			action = best_actions[0];
-		}
-	}
-
-	return action;
-}
-
-inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state, 
-		bool terminal, bool testing, double epsilon)
+inline Action AgentNet::Perceive(cv::Mat* raw_state, Action action)
 {		
 	// TODO: Store entire transition: s, a, r, s'
 	if(last_state_ != nullptr && should_train_)
@@ -512,7 +477,7 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 		{
 			purge_old_transitions(replay_memory_);
 		}
-		transitions_->add(last_state_, last_action_, reward, last_terminal_);
+		transitions_->add(last_state_, last_action_.heading_change, last_action_.speed_change); 
 	}
 
 	// TODO: Compute some validation statistics to judge performance
@@ -523,36 +488,31 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	std::vector<int> labels(frames.size());
 	frames_input_layer_->AddMatVector(frames, labels);
 	
-	std::vector<float> target_input(num_actions_);
+	std::vector<float> target_input(num_output_);
 	std::fill(target_input.begin(), target_input.end(), 0.0f);
-	//action_input_layer_->AddDatumVector()???
-
-	// TODO: Select action greedily using prev_results - if prev_results is null, then select random.
-	int action = select_action_e_greedy(epsilon);
-	std::vector<float> actions;
-	set_action_vector(action, actions);
-	std::vector<float> labels2(num_actions_);
+	std::vector<float> output;
+//	set_action_vector(action, actions);
+	std::vector<float> labels2(num_output_);
 	std::fill(labels2.begin(), labels2.end(), 0.0f);
-	action_input_layer_->Reset(&actions[0], &labels2[0], minibatch_size_);
 	target_input_layer_->Reset(&target_input[0], &labels2[0], minibatch_size_);
 
 	try
 	{
 		// Net forward
 		net_->ForwardPrefilled(nullptr);
-		const float * out_array = net_->blob_by_name("gtanet_q_values")->cpu_data(); // TODO store blob object and reuse pointer
+		const float * out_array = net_->blob_by_name("gtanet_fctop")->cpu_data(); // TODO store blob object and reuse pointer
 //		const float* out_array = results[0]->cpu_data();
 		// Store results in prev_results
-		last_q_values_.erase(last_q_values_.begin(), last_q_values_.end());
-		for(int i = 0; i < num_actions_; i++)
-		{
-			last_q_values_.push_back(out_array[i]);
-			if(iter_ % 40 == 0)
-			{
-				LOG(INFO) << "q values " << i << " = " << out_array[i];
-			}
-		}
-		action = select_action_e_greedy(epsilon);
+//		last_q_values_.erase(last_q_values_.begin(), last_q_values_.end());
+//		for(int i = 0; i < num_output_; i++)
+//		{
+//			last_q_values_.push_back(out_array[i]);
+//			if(iter_ % 40 == 0)
+//			{
+//				LOG(INFO) << "q values " << i << " = " << out_array[i];
+//			}
+//		}
+//		action = select_action_e_greedy(epsilon);
 	}
 	catch(...)
 	{
@@ -565,10 +525,12 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
 	{
 		// Next iteration will be training, go to sleep by setting action to no-op
-		action = 0;
+		// TODO: Set this to desired heading / speed change.
+		action.heading_change = 0;
+		action.speed_change = 0;
 	}
 
-	if(should_train_ && iter_ % train_iter_ == 0)
+	if(should_train_ && iter_ % train_iter_ == 0 && iter_ != 0)
 	{
 		if(should_train_async_)
 		{
@@ -578,19 +540,19 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 		{
 			try
 			{
-				QLearnMinibatch();
+				Learn();
 			}
 			catch(const std::exception &exc)
 			{
 				LOG(INFO) << exc.what();
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				QLearnMinibatch();
+				Learn();
 			}
 			catch(...)
 			{
 				LOG(INFO) << "error training, trying again";
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				QLearnMinibatch();
+				Learn();
 			}
 		}
 	}
@@ -598,8 +560,6 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	if(iter_  % 100 == 0)
 	{
 		LOG(INFO) << "iteration: " << iter_;
-		LOG(INFO) << "epsilon: " << epsilon;
-		LOG(INFO) << "reward: " << reward;
 	}
 
 
@@ -610,11 +570,10 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 	
 	last_state_ = raw_state;
 	last_action_ = action;
-	last_terminal_ = false;
 
 	if(!should_train_)
 	{
-		// Image history gets deleted in QLearnMinibatch() during training
+		// Image history gets deleted in Learn() during training
 		(*raw_state).release();
 		delete raw_state;
 	}
@@ -644,7 +603,7 @@ inline int NeuralQLearner::perceive(float reward, cv::Mat* raw_state,
 
 }
 
-#endif // DQN_NEURAL_Q_LEANER_H
+#endif // AGENT_NET_H
 
 //NeuralQLearner::NeuralQLearner()
 //{

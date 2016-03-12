@@ -26,8 +26,8 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
-#include "dqn/NeuralQLearner.h"
-#include "dqn/dqn.h"
+#include "deep_drive/AgentNet.h"
+#include "deep_drive/deep_drive.h"
 #include <codecvt>
 #include <locale>
 
@@ -42,7 +42,7 @@
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 #include <future>
 
-using namespace dqn;
+using namespace deep_drive;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -180,7 +180,9 @@ void InitializeSharedAgentControlMemory(SharedAgentControlData **agentControlDat
     }
 
     *agentControlData = reinterpret_cast<SharedAgentControlData*>(lpAgentControlSharedMemory);
-	(**agentControlData).paused = true;
+	(**agentControlData).should_agent_wait = true;
+	(**agentControlData).heading_achieved = true;
+	(**agentControlData).speed_achieved = true;
 
 //    (*agentControlData)->frameTime = 0;
 
@@ -278,14 +280,14 @@ float get_reward(SharedRewardData* rewardData)
 	return reward;
 }
 
-void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner, std::string path)
+void load_pretrained_net(deep_drive::AgentNet*& agent_net, std::string path)
 {
 	bool weights_loaded = false;
 	while(!weights_loaded)
 	{
 		try
 		{
-			neural_q_learner->load_weights(path);
+			agent_net->load_weights(path);
 			weights_loaded = true;
 		}
 		catch(...)
@@ -296,7 +298,7 @@ void load_pretrained_net(dqn::NeuralQLearner*& neural_q_learner, std::string pat
 	}
 }
 
-void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing, 
+void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
 	SharedAgentControlData* shared_agent_control, SharedRewardData* shared_reward)
 {
 	// Number of actions
@@ -310,40 +312,41 @@ void init_dqn(dqn::NeuralQLearner*& neural_q_learner, bool is_testing,
 
 	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
 	auto minibatch_size = 16; // Needs to be fast enough to act between batches.
-	auto n_actions = 7; // Also specified in model proto.
-	double discount = 0.99;
-	bool should_train = true;
+	auto n_output = 2; // Also specified in model proto.
 	bool should_train_async = false;
-	bool should_load_imagenet_pretrained = false;
-	bool should_load_dqn_pretrained = true;
+	bool should_manually_set_acceleration = false;
+	bool should_load_imagenet_pretrained = true;
+	bool should_load_deep_drive_pretrained = false;
 	int train_iter = 75;
 	int clone_iter = 1000;
-	bool exploit = true;
 
 	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
 	auto state_dimension = 1;
 
-	neural_q_learner = new dqn::NeuralQLearner(state_dimension, 
-		replay_memory, minibatch_size, n_actions, discount,
-		"examples/dqn/dqn_solver.prototxt", should_train, train_iter,
-		should_train_async, clone_iter, exploit, shared_agent_control, shared_reward);
+	agent_net = new deep_drive::AgentNet(state_dimension,
+		replay_memory, minibatch_size, n_output,
+		"examples/deep_drive/deep_drive_solver.prototxt", should_train, train_iter,
+		should_train_async, should_manually_set_acceleration, clone_iter, 
+		shared_agent_control, shared_reward);
 	
 	(*shared_agent_control).should_reload_game = true;
-	neural_q_learner->wait_to_reload_game();
-	neural_q_learner->reset_agent();
+	agent_net->wait_to_reload_game();
+	agent_net->wait_to_toggle_pause_game();
+//	agent_net->reset_agent();
 
 	// Fine tune
-	std::string weight_path_image_net = "examples/dqn/bvlc_reference_caffenet.caffemodel";
-//	std::string weight_path_dqn = "caffe_dqn_train_iter_20000_94_epsilon.caffemodel";
-	std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
-	if(should_load_dqn_pretrained)
+	std::string weight_path_image_net = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
+	std::string weight_path_deep_drive = "caffe_deep_drive_train_iter_1000_overfit.caffemodel";
+	//std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
+	if(should_load_deep_drive_pretrained)
 	{
-		load_pretrained_net(neural_q_learner, weight_path_dqn);
+		load_pretrained_net(agent_net, weight_path_deep_drive);
 	}	
 	else if(should_load_imagenet_pretrained)
 	{
-		load_pretrained_net(neural_q_learner, weight_path_image_net);
+		load_pretrained_net(agent_net, weight_path_image_net);
 	}
+	agent_net->wait_to_toggle_pause_game();
 }
 
 SharedAgentControlData* wait_for_auto_it_sharing()
@@ -351,7 +354,7 @@ SharedAgentControlData* wait_for_auto_it_sharing()
 	SharedAgentControlData* agent_control_data;
 	InitializeSharedAgentControlMemory(&agent_control_data);
 
-	while ((*agent_control_data).paused) {
+	while ((*agent_control_data).should_agent_wait) {
 		output("Waiting for AutoIt to respond...");
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 	}
@@ -419,27 +422,20 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	cv::Mat* blank = get_screen(); // First screen is always black.
 
 	bool should_show_image = false;
-	bool should_skip_dqn = false;
+	bool should_skip_agent = false;
 
-	// DQN
+	// DeepDrive
 	int step = 0;
-	dqn::NeuralQLearner* neural_q_learner = nullptr;
-	double reward = 0.0;
-	bool is_terminal = false;
-	bool is_testing = false;
-	double epsilon = 1.0;
-	double epsilon_end = 0.0; // Game is not deterministic like ALE. Full explotation okay.
+	deep_drive::AgentNet* agent_net = nullptr;
+	Action action = {};
+	double last_heading = 0;
+	double last_speed = 0;
+	bool should_train = true;
+	bool manual_action = false;
 
-	// 10 actions a second for 10 hours. 
-	double epsilon_step = (epsilon - epsilon_end) / (10 * 60 * 60 * 10);
-
-	double epsilon_resume = 0.84; // TODO: Automate
-
-	epsilon = epsilon_resume;
-
-	if(!should_skip_dqn)
+	if(!should_skip_agent)
 	{
-		init_dqn(neural_q_learner, is_testing, shared_agent_data, shared_reward_data);
+		init_agent_net(agent_net, should_train, shared_agent_data, shared_reward_data);
 	}
 
 	// Main loop
@@ -458,7 +454,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
  		RenderFrame();
 
-		// DQN stuff
+		// DeepDrive stuff
 		cv::Mat* screen = get_screen();
 		if(screen && should_show_image)
 		{
@@ -469,22 +465,47 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		{
 			output("Could not get screen, skipping..");
 		}
-		else if(should_skip_dqn)
+		else if(should_skip_agent)
 		{
-			output("skip_dqn set, skipping dqn...");
+			output("should_skip_agent set, skipping dqn...");
 			delete screen;
 		}
-		else if((*shared_agent_data).paused)
+		else if((*shared_agent_data).should_agent_wait)
 		{
 			output("Perception paused, skipping...");
 			delete screen;
 		}
 		else
 		{
-			reward = get_reward(shared_reward_data); // TODO: Make sure there are no reward "spikes". Will cause 'sploding.
-			auto action_index = neural_q_learner->perceive(reward, screen, is_terminal, 
-				is_testing, epsilon);
-			(*shared_agent_data).action = action_index;
+			action.heading_change = last_heading - shared_reward_data->heading;
+			action.speed_change = last_speed - shared_reward_data->speed;
+			last_heading = shared_reward_data->heading;
+			last_speed = shared_reward_data->speed;
+			if(step != 0) // Let heading and speed initialize.
+			{
+				Action next_action = agent_net->Perceive(screen, action);
+				// Continue getting speed and heading from reward_data until matches desired speed, heading, then set control data
+
+//				LOG(INFO) << "next action heading change" << next_action.heading_change;
+//				LOG(INFO) << "next action speed change" << next_action.speed_change;
+
+				if(should_train)
+				{
+					// We are not controlling acceleration.
+					(*shared_agent_data).heading_achieved = true;
+					(*shared_agent_data).speed_achieved = true;
+				}
+				else
+				{
+					if(manual_action)
+					{
+						(*shared_agent_data).heading_achieved = true;
+						(*shared_agent_data).speed_achieved = true;						
+					}
+					agent_net->Act(shared_agent_data, shared_reward_data, next_action);
+				}
+			}
+
 			(*shared_agent_data).step = step;
 
 			typedef std::chrono::milliseconds ms;
@@ -494,15 +515,6 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			auto extra_wait = kStepDuration - elapsed_ms;
 			std::this_thread::sleep_for(extra_wait);
 			step++;
-			if(epsilon > epsilon_end)
-			{
-				epsilon -= epsilon_step;
-				if(epsilon < epsilon_end)
-				{
-					// Account for floating point errors
-					epsilon = epsilon_end;
-				}
-			}
 		}
 
 		// TODO: test phase

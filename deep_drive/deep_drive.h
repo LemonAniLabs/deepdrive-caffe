@@ -1,5 +1,5 @@
-#ifndef DQN_H
-#define DQN_H
+#ifndef DEEP_DRIVE_H
+#define DEEP_DRIVE_H
 
 #include <deque>
 #include <opencv2/core/mat.hpp>
@@ -23,14 +23,19 @@
 //	int x = 1;
 //}
 
-namespace dqn{
+namespace deep_drive{
 	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
 	struct SharedAgentControlData
 	{
 		INT32 action;
-		bool paused;
+		bool should_agent_wait;
 		LONGLONG step;
 		bool should_reload_game;
+		bool should_toggle_pause_game;
+		double heading_change;
+		double speed_change;
+		bool heading_achieved;
+		bool speed_achieved;
 	};
 
 	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
@@ -40,6 +45,10 @@ namespace dqn{
 		double distance;
 		bool on_road;
 		bool should_reset_agent;
+		double heading;
+		double speed;
+		double desired_heading;
+		double desired_speed;
 	};
 
 
@@ -48,6 +57,12 @@ namespace dqn{
 		OutputDebugStringA(out_string);
 		LOG(INFO) << out_string;
 	}
+
+	struct Action
+	{
+		double heading_change;
+		double speed_change;
+	};
 }
 
-#endif  // DQN_H
+#endif  // DEEP_DRIVE_H

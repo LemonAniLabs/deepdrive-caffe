@@ -43,7 +43,7 @@
     <Filter Include="Source Files\tools\extra">
       <UniqueIdentifier>{e7086719-26f7-47dc-a216-ae1b84a02996}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\dqn">
+    <Filter Include="Source Files\deep_drive">
       <UniqueIdentifier>{f4dbaa1a-5469-44d6-b94c-fdc1ad933d43}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
@@ -324,8 +324,8 @@
     <ClCompile Include="tools\caffe.cpp">
       <Filter>Source Files\tools</Filter>
     </ClCompile>
-    <ClCompile Include="sensimoto.cpp">
-      <Filter>Source Files\dqn</Filter>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files\deep_drive</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -396,11 +396,11 @@
     <None Include="tools\upgrade_solver_proto_text.cpp">
       <Filter>Source Files\tools</Filter>
     </None>
-    <None Include="examples\dqn\dqn_model.prototxt">
-      <Filter>Source Files\dqn</Filter>
+    <None Include="examples\deep_drive\deep_drive_model.prototxt">
+      <Filter>Source Files\deep_drive</Filter>
     </None>
-    <None Include="examples\dqn\dqn_solver.prototxt">
-      <Filter>Source Files\dqn</Filter>
+    <None Include="examples\deep_drive\deep_drive_solver.prototxt">
+      <Filter>Source Files\deep_drive</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
@@ -859,20 +859,20 @@
     <ClInclude Include="src\caffe\proto\caffe.pb.h">
       <Filter>Source Files\proto</Filter>
     </ClInclude>
-    <ClInclude Include="dqn\dqn.h">
-      <Filter>Source Files\dqn</Filter>
-    </ClInclude>
-    <ClInclude Include="dqn\NeuralQLearner.h">
-      <Filter>Source Files\dqn</Filter>
-    </ClInclude>
     <ClInclude Include="dqn\TransitionQueue.h">
-      <Filter>Source Files\dqn</Filter>
+      <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
     <ClInclude Include="helper_cuda.h">
-      <Filter>Source Files\dqn</Filter>
+      <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
     <ClInclude Include="helper_string.h">
-      <Filter>Source Files\dqn</Filter>
+      <Filter>Source Files\deep_drive</Filter>
+    </ClInclude>
+    <ClInclude Include="deep_drive\AgentNet.h">
+      <Filter>Source Files\deep_drive</Filter>
+    </ClInclude>
+    <ClInclude Include="deep_drive\deep_drive.h">
+      <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
