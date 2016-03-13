@@ -129,6 +129,7 @@ void copyBackBufferToMemory(BYTE *& imcopy);
 bool cudaCopyBackBufferToMemory(ID3D11Texture2D* pSurface, BYTE *& imcopy);
 cv::Mat* get_screen();
 void showImage(cv::Mat img);
+void saveImage(cv::Mat img, int iter);
 
 double previousDistance = std::numeric_limits<double>::min();
 double previouslyTraveled = std::numeric_limits<double>::min();
@@ -303,40 +304,48 @@ void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
 {
 	// Number of actions
 	// 0 None
-	// 1 Left forward
-	// 2 Left backward
-	// 3 Right forward
-	// 4 Right backward
-	// 5 Forward
-	// 6 Backward
+	// 1 Left
+	// 2 Rifht
+	// 3 Forward
+	// 4 Backward
+	// 5 Left forward
+	// 6 Left backward
+	// 7 Right forward
+	// 8 Right backward
 
 	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
-	auto minibatch_size = 16; // Needs to be fast enough to act between batches.
+	auto minibatch_size = 64; // Needs to be fast enough to act between batches.
 	auto n_output = 2; // Also specified in model proto.
 	bool should_train_async = false;
 	bool should_manually_set_acceleration = false;
-	bool should_load_imagenet_pretrained = true;
+	bool should_load_imagenet_pretrained = false;
 	bool should_load_deep_drive_pretrained = false;
+	bool should_resume_deep_drive = true;
 	int train_iter = 75;
 	int clone_iter = 1000;
 
 	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
 	auto state_dimension = 1;
 
+	std::string resume_path = "";
+	if(should_resume_deep_drive)
+	{
+		resume_path = "caffe_deep_drive_train_iter_1000_before_cops_again.solverstate";
+	}
+
 	agent_net = new deep_drive::AgentNet(state_dimension,
 		replay_memory, minibatch_size, n_output,
 		"examples/deep_drive/deep_drive_solver.prototxt", should_train, train_iter,
 		should_train_async, should_manually_set_acceleration, clone_iter, 
-		shared_agent_control, shared_reward);
+		shared_agent_control, shared_reward, resume_path);
 	
 	(*shared_agent_control).should_reload_game = true;
 	agent_net->wait_to_reload_game();
 	agent_net->wait_to_toggle_pause_game();
-//	agent_net->reset_agent();
 
 	// Fine tune
 	std::string weight_path_image_net = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
-	std::string weight_path_deep_drive = "caffe_deep_drive_train_iter_1000_overfit.caffemodel";
+	std::string weight_path_deep_drive = "caffe_deep_drive_train_iter_1000_before_cops_again.caffemodel";
 	//std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
 	if(should_load_deep_drive_pretrained)
 	{
@@ -456,9 +465,22 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 		// DeepDrive stuff
 		cv::Mat* screen = get_screen();
-		if(screen && should_show_image)
+		if(screen)
 		{
-			showImage(*screen);
+			if(should_show_image)
+			{
+				showImage(*screen);
+			}
+
+			if(step % 100 == 0)
+			{
+				saveImage(*screen, step);
+			}
+		}
+
+		if(step % 100 == 0)
+		{
+			agent_net->reset_game_mod_options();
 		}
 
 		if(screen == nullptr)
@@ -1099,6 +1121,17 @@ void showImage(cv::Mat img)
 	cv::imshow("Display window", img); // Show our image inside it.
 
 	cv::waitKey(0);
+}
+
+void saveImage(cv::Mat img, int iter)
+{
+	if (! img.data) // Check for invalid input
+	{
+		std::cout << "No image data" << std::endl ;
+		return;
+	}
+	// Save the frame into a file
+	cv::imwrite("screenshot_" + std::to_string(iter) + ".bmp", img);
 }
 
 bool copyTextureToMemory(ID3D11Texture2D* tex, BYTE *& imcopy)

@@ -68,7 +68,7 @@ class AgentNet
 		int n_actions, std::string solver_path, bool is_training, int train_iter,
 		bool should_train_async, bool should_manually_set_acceleration,
 		int clone_iter, SharedAgentControlData* shared_agent_control,
-		SharedRewardData* shared_reward)
+		SharedRewardData* shared_reward, std::string resume_path)
 	{
 		transitions_ = new TransitionQueue(state_dim, replay_memory);
 		minibatch_size_ = minibatch_size;
@@ -98,6 +98,11 @@ class AgentNet
 
 		// solver handler
 		solver_ = caffe::SolverRegistry<float>::CreateSolver(solver_param);
+
+		if(resume_path != "")
+		{
+			solver_->Restore(resume_path.c_str());
+		}
 
 		//net_ = new caffe::Net<float>(CAFFE_ROOT + "/" + proto_path);
 
@@ -292,12 +297,12 @@ class AgentNet
 		}
 	}
 
-	void reset_agent()
+	void reset_game_mod_options()
 	{
 		(*shared_reward_).should_reset_agent = true;
 		do
 		{
-			output("Waiting to reset position...");
+			output("Waiting to reset game mod options...");
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		} while ((*shared_reward_).should_reset_agent == true);
 	}
@@ -392,51 +397,6 @@ class AgentNet
 		{
 			wait_to_toggle_pause_game();
 		}
-
-	}
-
-	void Act(SharedAgentControlData* shared_agent_data, SharedRewardData* shared_reward_data, Action action)
-	{
-//		LOG(INFO) << "heading change: " << action.heading_change;
-//		LOG(INFO) << "speed change: " << action.speed_change;
-
-		float new_heading = shared_reward_data->heading + action.heading_change;
-		float new_speed = shared_reward_data->speed + action.speed_change;
-		float heading_margin = 0.001;
-		float speed_margin = 0.001;
-		(*shared_agent_data).heading_achieved = false;
-		(*shared_agent_data).speed_achieved = false;
-
-		if(should_manually_set_acceleration_)
-		{
-			(*shared_reward_data).desired_heading = new_heading;
-			(*shared_reward_data).desired_speed = new_speed;
-		}
-
-		do
-		{
-			if(abs(shared_reward_data->heading - new_heading) >= heading_margin)
-			{
-				(*shared_agent_data).heading_change = shared_reward_data->heading - new_heading;
-			}
-			else
-			{
-				(*shared_agent_data).heading_achieved = true;
-			}
-
-			if(abs(shared_reward_data->speed - new_speed) >= speed_margin)
-			{
-				(*shared_agent_data).speed_change = shared_reward_data->speed - new_speed;
-			}
-			else
-			{
-				(*shared_agent_data).speed_achieved = true;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-			// TODO: Need to have some timeout here, sync with the 250ms step time of main.cpp
-
-		} while( ! shared_agent_data->heading_achieved || ! shared_agent_data->speed_achieved);
 	}
 };
 
@@ -468,7 +428,7 @@ inline void train_minibatch_thread(AgentNet* self)
 	self->Learn();
 }
 
-inline Action AgentNet::Perceive(cv::Mat* raw_state, Action action)
+inline int AgentNet::Perceive(cv::Mat* raw_state, int action)
 {		
 	// TODO: Store entire transition: s, a, r, s'
 	if(last_state_ != nullptr && should_train_)
@@ -477,7 +437,7 @@ inline Action AgentNet::Perceive(cv::Mat* raw_state, Action action)
 		{
 			purge_old_transitions(replay_memory_);
 		}
-		transitions_->add(last_state_, last_action_.heading_change, last_action_.speed_change); 
+		transitions_->add(last_state_, action); 
 	}
 
 	// TODO: Compute some validation statistics to judge performance
@@ -525,9 +485,7 @@ inline Action AgentNet::Perceive(cv::Mat* raw_state, Action action)
 	if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
 	{
 		// Next iteration will be training, go to sleep by setting action to no-op
-		// TODO: Set this to desired heading / speed change.
-		action.heading_change = 0;
-		action.speed_change = 0;
+		action = 0;
 	}
 
 	if(should_train_ && iter_ % train_iter_ == 0 && iter_ != 0)

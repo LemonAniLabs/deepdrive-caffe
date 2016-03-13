@@ -47,8 +47,9 @@ namespace deep_drive{
 		bool should_reset_agent;
 		double heading;
 		double speed;
-		double desired_heading;
-		double desired_speed;
+		double desired_heading; // for directly setting heading, intermediate step to real control
+		double desired_speed; // for directly setting speed, intermediate step to real control
+		double rotational_velocity;
 	};
 
 
@@ -57,12 +58,6 @@ namespace deep_drive{
 		OutputDebugStringA(out_string);
 		LOG(INFO) << out_string;
 	}
-
-	struct Action
-	{
-		double heading_change;
-		double speed_change;
-	};
 }
 
 #endif  // DEEP_DRIVE_H

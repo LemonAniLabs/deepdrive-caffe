@@ -12,8 +12,7 @@ namespace deep_drive
 struct Transition
 {
 	cv::Mat* image;
-	float heading_change;
-	float speed_change;
+	int action;
 };
 
 class TransitionQueue
@@ -21,8 +20,7 @@ class TransitionQueue
 	int state_dim_;
 	int replay_memory_;
 	std::deque<cv::Mat*> images_;
-	std::deque<float>    heading_changes_;
-	std::deque<float>    speed_changes_;
+	std::deque<int>      actions_;
 
 	public:
 	TransitionQueue(int state_dim, int replay_memory)
@@ -36,11 +34,10 @@ class TransitionQueue
 
 	~TransitionQueue() {}
 
-	void add(cv::Mat* m, float heading_change, float speed_change) 
+	void add(cv::Mat* m, int action) 
 	{
 		images_.push_back(m);
-		heading_changes_.push_back(heading_change);
-		speed_changes_.push_back(speed_change);
+		actions_.push_back(action);
 	}
 
 	int size() const
@@ -51,8 +48,7 @@ class TransitionQueue
 	void release()
 	{
 		release_front(images_);
-		heading_changes_.pop_front();
-		speed_changes_.pop_front();
+		actions_.pop_front();
 	}
 
 	template <typename Dtype>
@@ -85,11 +81,9 @@ class TransitionQueue
 			}
 		}
 
-		// TODO: Return state, action, reward, state2, term
 		Transition ret;
-		ret.image          = images_[start];
-		ret.heading_change = heading_changes_[start];
-		ret.speed_change   = speed_changes_[start];
+		ret.image  = images_[start];
+		ret.action = actions_[start - 1];
 
 		return ret;
 	}
