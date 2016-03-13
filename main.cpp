@@ -315,7 +315,7 @@ void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
 
 	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
 	auto minibatch_size = 64; // Needs to be fast enough to act between batches.
-	auto n_output = 2; // Also specified in model proto.
+	auto n_output = 9; // Also specified in model proto.
 	bool should_train_async = false;
 	bool should_manually_set_acceleration = false;
 	bool should_load_imagenet_pretrained = false;
@@ -435,8 +435,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	// DeepDrive
 	int step = 0;
-	deep_drive::AgentNet* agent_net = nullptr;
-	Action action = {};
+	AgentNet* agent_net = nullptr;
+	int action = 0;
 	double last_heading = 0;
 	double last_speed = 0;
 	bool should_train = true;
@@ -499,18 +499,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 		else
 		{
-			action.heading_change = last_heading - shared_reward_data->heading;
-			action.speed_change = last_speed - shared_reward_data->speed;
-			last_heading = shared_reward_data->heading;
-			last_speed = shared_reward_data->speed;
+//			last_heading = shared_reward_data->heading;
+//			last_speed = shared_reward_data->speed;
 			if(step != 0) // Let heading and speed initialize.
 			{
-				Action next_action = agent_net->Perceive(screen, action);
-				// Continue getting speed and heading from reward_data until matches desired speed, heading, then set control data
-
-//				LOG(INFO) << "next action heading change" << next_action.heading_change;
-//				LOG(INFO) << "next action speed change" << next_action.speed_change;
-
+				int next_action = agent_net->Perceive(screen, action);
 				if(should_train)
 				{
 					// We are not controlling acceleration.
@@ -524,7 +517,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 						(*shared_agent_data).heading_achieved = true;
 						(*shared_agent_data).speed_achieved = true;						
 					}
-					agent_net->Act(shared_agent_data, shared_reward_data, next_action);
+					shared_agent_data->action = next_action;
 				}
 			}
 

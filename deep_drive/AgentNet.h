@@ -48,7 +48,7 @@ class AgentNet
 	int num_output_;
 	std::vector<int> actions_;
 	cv::Mat* last_state_;
-	Action   last_action_;
+	int      last_action_;
 	int raw_frame_width_ = 771;
 	int frame_area_ = raw_frame_width_ * raw_frame_width_;
 	int sample_frame_count_ = 4;
@@ -65,7 +65,7 @@ class AgentNet
 
 	public:
 	AgentNet(int state_dim, int replay_memory, int minibatch_size,
-		int n_actions, std::string solver_path, bool is_training, int train_iter,
+		int num_output, std::string solver_path, bool is_training, int train_iter,
 		bool should_train_async, bool should_manually_set_acceleration,
 		int clone_iter, SharedAgentControlData* shared_agent_control,
 		SharedRewardData* shared_reward, std::string resume_path)
@@ -73,7 +73,7 @@ class AgentNet
 		transitions_ = new TransitionQueue(state_dim, replay_memory);
 		minibatch_size_ = minibatch_size;
 		replay_memory_ = replay_memory;
-		num_output_ = n_actions;
+		num_output_ = num_output;
 		should_train_ = is_training; // TODO: Change to should_train
 		should_train_async_ = should_train_async;
 		train_iter_ = train_iter;
@@ -82,7 +82,7 @@ class AgentNet
 		shared_reward_ = shared_reward;
 		should_manually_set_acceleration_ = should_manually_set_acceleration;
 
-		for(auto i = 0; i < n_actions; i++)
+		for(auto i = 0; i < num_output; i++)
 		{
 			actions_.push_back(i);
 		}
@@ -116,6 +116,9 @@ class AgentNet
 		target_input_layer_ =
 			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
 				net_->layer_by_name("target_input_layer"));
+//		reshape_layer_ =
+//			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
+//				net_->layer_by_name("reshape"));
 
 
  		assert(frames_input_layer_);
@@ -125,42 +128,42 @@ class AgentNet
 		input_layers_.push_back(frames_input_layer_);
 		input_layers_.push_back(target_input_layer_);
 
-		caffe::NetParameter net_param;
-		ReadNetParamsFromTextFileOrDie("examples/deep_drive/deep_drive_model.prototxt", &net_param);
-		clone_net_.reset(new caffe::Net<float>(net_param));
-		reset_clone_net();
+//		caffe::NetParameter net_param;
+//		ReadNetParamsFromTextFileOrDie("examples/deep_drive/deep_drive_model.prototxt", &net_param);
+//		clone_net_.reset(new caffe::Net<float>(net_param));
+//		reset_clone_net();
 
 		net_->set_debug_info(false);
-		clone_net_->set_debug_info(false);
+//		clone_net_->set_debug_info(false);
 
 		// solver_->OnlineUpdateSetup(nullptr);
 	}
 
-	void reset_clone_net()
-	{
-		caffe::NetParameter net_param;
-		net_->ToProto(&net_param);
-		net_param.mutable_state()->set_phase(caffe::TEST);
-		clone_net_->CopyTrainedLayersFrom(net_param);
-		
-		clone_frames_input_layer_ =
-			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-				clone_net_->layer_by_name("gta_frames_input_layer"));
-		clone_target_input_layer_ =
-			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-				clone_net_->layer_by_name("target_input_layer"));
-//		clone_reshape_layer_ =
-//			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
-//				net_->layer_by_name("reshape"));
-
- 		assert(clone_frames_input_layer_);
-		assert(clone_target_input_layer_);
-//		assert(clone_reshape_layer_);
-
-		clone_input_layers_.push_back(clone_frames_input_layer_);
-		clone_input_layers_.push_back(clone_target_input_layer_);
-		output("Cloned net");
-	}
+//	void reset_clone_net()
+//	{
+//		caffe::NetParameter net_param;
+//		net_->ToProto(&net_param);
+//		net_param.mutable_state()->set_phase(caffe::TEST);
+//		clone_net_->CopyTrainedLayersFrom(net_param);
+//
+//		clone_frames_input_layer_ =
+//			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
+//				clone_net_->layer_by_name("gta_frames_input_layer"));
+//		clone_target_input_layer_ =
+//			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
+//				clone_net_->layer_by_name("target_input_layer"));
+////		clone_reshape_layer_ =
+////			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
+////				net_->layer_by_name("reshape"));
+//
+// 		assert(clone_frames_input_layer_);
+//		assert(clone_target_input_layer_);
+////		assert(clone_reshape_layer_);
+//
+//		clone_input_layers_.push_back(clone_frames_input_layer_);
+//		clone_input_layers_.push_back(clone_target_input_layer_);
+//		output("Cloned net");
+//	}
 
 	void load_weights(std::string model_file)
 	{
@@ -184,7 +187,7 @@ class AgentNet
 
 	int select_action_e_greedy(double epsilon);
 
-	Action Perceive(cv::Mat* raw_state, Action action);
+	int Perceive(cv::Mat* raw_state, int action);
 
 	bool get_queue_lock()
 	{
@@ -216,7 +219,7 @@ class AgentNet
 			{
 				actions.push_back(0.0);
 			}
-		}		
+		}
 	}
 
 	void FeedNet(std::vector<Transition>& transistion_sample, 
@@ -229,10 +232,6 @@ class AgentNet
 		{
 			Transition transition = transistion_sample[i];
 			frames.push_back(*(transition.image));
-			// TODO: Set heading vector
-			// TODO: Set speed vector
-//			set_action_vector(transition.a, actions);
-
 
 			// Frame input size is minibatch * frames_per_sample * sizeof(cv::Mat == w * h)
 			// TODO: Set input channels with four consecutive frames.
@@ -333,10 +332,10 @@ class AgentNet
 
 		// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
 
-		if(iter_ % clone_iter_ == 0)
-		{
-			reset_clone_net();
-		}
+//		if(iter_ % clone_iter_ == 0)
+//		{
+//			reset_clone_net();
+//		}
 
 		while(train_count < train_iter_)
 		{
@@ -348,14 +347,18 @@ class AgentNet
 			// Get targets
 			std::vector<float> targets(num_output_ * minibatch_size_);
 			// TODO: Set targets
-
 			std::fill(targets.begin(), targets.end(), 0.0f);
 			for(int i = 0; i < minibatch_size_; i++)
 			{
+				std::vector<float> actions(num_output_);
 				Transition transition = transistion_sample[i];
-				std::vector<float> q_2_sample;
-				targets[i * num_output_    ] = transition.heading_change;
-				targets[i * num_output_ + 1] = transition.speed_change;
+				set_action_vector(transition.action, actions);
+				std::vector<float> labels2(num_output_);
+				std::fill(labels2.begin(), labels2.end(), 0.0f);
+				for(int j = 0; j < num_output_; j++)
+				{
+					targets[i * num_output_ + j] = actions[j];
+				}
 			}
 
 			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
