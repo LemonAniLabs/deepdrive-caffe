@@ -44,16 +44,17 @@ class AgentNet
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_frames_input_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_target_input_layer_;
 	std::vector<boost::shared_ptr<caffe::MemoryDataLayer<float>>> input_layers_;
-	std::vector<boost::shared_ptr<caffe::MemoryDataLayer<float>>> clone_input_layers_;
+//	std::vector<boost::shared_ptr<caffe::MemoryDataLayer<float>>> clone_input_layers_;
 	int num_output_;
 	std::vector<int> actions_;
 	cv::Mat* last_state_;
 	int      last_action_;
 	int raw_frame_width_ = 771;
 	int frame_area_ = raw_frame_width_ * raw_frame_width_;
-	int sample_frame_count_ = 4;
-	int sample_data_size_ = frame_area_ * sample_frame_count_;
-	int minibatch_data_size_ = sample_data_size_ * minibatch_size_;
+//	int sample_frame_count_ = 4;
+//	int sample_data_size_ = frame_area_ * sample_frame_count_;
+//	int minibatch_data_size_ = sample_data_size_ * minibatch_size_;
+	std::vector<float> last_action_values_;
 	bool should_train_;
 	bool should_train_async_;
 	bool should_manually_set_acceleration_;
@@ -92,7 +93,7 @@ class AgentNet
 		caffe::SolverParameter solver_param;
 		caffe::ReadProtoFromTextFileOrDie(solver_path, &solver_param);
 
-		// set device id and mode
+		// set device id and mode 
 		caffe::Caffe::SetDevice(0);
 		caffe::Caffe::set_mode(caffe::Caffe::GPU);
 
@@ -179,15 +180,13 @@ class AgentNet
 		{
 			input_layers_[i].reset();
 		}
-		for(int i = 0; i < clone_input_layers_.size(); i++)
-		{
-			clone_input_layers_[i].reset();
-		}
+//		for(int i = 0; i < clone_input_layers_.size(); i++)
+//		{
+//			clone_input_layers_[i].reset();
+//		}
 	}
 
 	int select_action_e_greedy(double epsilon);
-
-	int Perceive(cv::Mat* raw_state, int action);
 
 	bool get_queue_lock()
 	{
@@ -292,7 +291,7 @@ class AgentNet
 		for(int i = 0; i < input_layers_.size(); i++)
 		{
 			(input_layers_[i])->set_batch_size(batch_size);
-			(clone_input_layers_[i])->set_batch_size(batch_size);
+//			(clone_input_layers_[i])->set_batch_size(batch_size);
 		}
 	}
 
@@ -337,7 +336,7 @@ class AgentNet
 //			reset_clone_net();
 //		}
 
-		while(train_count < train_iter_)
+		while(train_count < train_iter_) // Set while(true) here to overfit on one batch
 		{
 			set_batch_size(minibatch_size_);
 			auto transistion_sample = transitions_->sample(minibatch_size_);
@@ -350,15 +349,8 @@ class AgentNet
 			std::fill(targets.begin(), targets.end(), 0.0f);
 			for(int i = 0; i < minibatch_size_; i++)
 			{
-				std::vector<float> actions(num_output_);
 				Transition transition = transistion_sample[i];
-				set_action_vector(transition.action, actions);
-				std::vector<float> labels2(num_output_);
-				std::fill(labels2.begin(), labels2.end(), 0.0f);
-				for(int j = 0; j < num_output_; j++)
-				{
-					targets[i * num_output_ + j] = actions[j];
-				}
+				targets[i] = transition.action;
 			}
 
 			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
@@ -401,149 +393,212 @@ class AgentNet
 			wait_to_toggle_pause_game();
 		}
 	}
+
+	int select_action(std::vector<float> action_values)
+	{
+		// Choose the max value with random tie breaking
+		int action;
+		std::vector<int> best_actions;
+
+		float max_q = -std::numeric_limits<double>::max();
+		int max_q_i = -1;
+		for (auto i = 0; i < action_values.size(); i++) {
+			if(action_values[i] > max_q)
+			{
+				max_q = action_values[i];
+				best_actions.clear();
+				best_actions.push_back(i);
+			}
+			else if(action_values[i] == max_q)
+			{
+				best_actions.push_back(i);
+			}
+		}
+
+		if(best_actions.size() > 1)
+		{
+			action = *select_randomly(best_actions.begin(), best_actions.end());					
+		} 
+		else
+		{
+			action = best_actions[0];
+		}
+		return action;
+	}
+
+	int Perceive(cv::Mat* raw_state, int action)
+	{		
+		// TODO: Store entire transition: s, a, r, s'
+		if(last_state_ != nullptr && should_train_)
+		{
+			if(iter_ != 0 && iter_ % replay_memory_ == 0)
+			{
+				purge_old_transitions(replay_memory_);
+			}
+			transitions_->add(last_state_, action); 
+		}
+
+		// TODO: Compute some validation statistics to judge performance
+
+		// set the patch for testing
+		std::vector<cv::Mat> frames;
+		frames.push_back(*raw_state);
+		std::vector<int> labels(frames.size());
+		frames_input_layer_->AddMatVector(frames, labels);
+	
+		std::vector<float> target_input(num_output_);
+		std::fill(target_input.begin(), target_input.end(), 0.0f);
+		std::vector<float> output;
+	//	set_action_vector(action, actions);
+		std::vector<float> labels2(num_output_);
+		std::fill(labels2.begin(), labels2.end(), 0.0f);
+		target_input_layer_->Reset(&target_input[0], &labels2[0], minibatch_size_);
+
+		try
+		{
+			// Net forward
+			net_->ForwardPrefilled(nullptr);
+			const float * out_array = net_->blob_by_name("gtanet_fctop")->cpu_data(); // TODO store blob object and reuse pointer
+	//		const float* out_array = results[0]->cpu_data();
+			// Store results in prev_results
+			last_action_values_.erase(last_action_values_.begin(), last_action_values_.end());
+			for(int i = 0; i < num_output_; i++)
+			{
+				last_action_values_.push_back(out_array[i]);
+				if(iter_ % 40 == 0)
+				{
+					LOG(INFO) << "action values " << i << " = " << out_array[i];
+				}
+			}
+			action = select_action(last_action_values_);
+		}
+		catch(...)
+		{
+			LOG(INFO) << "Problem forwarding, most likely Eltwise product memory violation";
+			// TODO: Figure out why this is happening, where exactly (reshape or action), how often it happens and fix it.
+			// TODO: If this gets ported off windows, may need to do this for handling memory exceptions: http://stackoverflow.com/a/918891/134077
+			action = last_action_;
+		}
+
+		if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
+		{
+			// Next iteration will be training, go to sleep by setting action to no-op
+			action = 0;
+		}
+
+		if(should_train_ && iter_ % train_iter_ == 0 && iter_ != 0)
+		{
+			if(should_train_async_)
+			{
+				// Need to inline this method after class declaration to have access to train_minibatch_thread
+//				std::thread(train_minibatch_thread, this).detach();	
+			}
+			else
+			{
+				try
+				{
+					Learn();
+				}
+				catch(const std::exception &exc)
+				{
+					LOG(INFO) << exc.what();
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					Learn();
+				}
+				catch(...)
+				{
+					LOG(INFO) << "error training, trying again";
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					Learn();
+				}
+			}
+		}
+
+		if(iter_  % 100 == 0)
+		{
+			LOG(INFO) << "iteration: " << iter_;
+		}
+
+
+		//deleteme//std::thread t1(train_minibatch_thread, this);
+		//deleteme//t1.join();
+
+		// TODO: Return the action selected
+	
+		last_state_ = raw_state;
+		last_action_ = action;
+
+		if(!should_train_)
+		{
+			// Image history gets deleted in Learn() during training
+			(*raw_state).release();
+			delete raw_state;
+		}
+
+		iter_ += 1;
+
+		return action;
+	}
+
+	int infer_action(double rotational_velocity, double speed_change)
+	{
+		if(rotational_velocity == 0 && speed_change == 0)
+		{
+			// None
+			return 0;
+		}
+		else if(rotational_velocity > 0 && speed_change == 0)
+		{
+			// Left
+			return 1;
+		}
+		else if(rotational_velocity < 0 && speed_change == 0)
+		{
+			// Right
+			return 2;
+		}
+		else if(rotational_velocity == 0 && speed_change > 0)
+		{
+			// Forward
+			return 3;
+		}
+		else if(rotational_velocity == 0 && speed_change < 0)
+		{
+			// Backward
+			return 4;
+		}
+		else if(rotational_velocity > 0 && speed_change > 0)
+		{
+			// Left forward
+			return 5;
+		}
+		else if(rotational_velocity > 0 && speed_change < 0)
+		{
+			// Left backward
+			return 6;
+		}
+		else if(rotational_velocity < 0 && speed_change > 0)
+		{
+			// Right forward
+			return 7;
+		}
+		else if(rotational_velocity < 0 && speed_change < 0)
+		{
+			// Right backward
+			return 8;
+		} 
+		else
+		{
+			throw std::invalid_argument( "Action could not be inferred." );
+		}
+	}
 };
-
-template<typename Iter, typename RandomGenerator>
-Iter select_randomly(Iter start, Iter end, RandomGenerator& g) {
-    std::uniform_int_distribution<> dis(0, std::distance(start, end) - 1);
-    std::advance(start, dis(g));
-    return start;
-}
-
-template<typename Iter>
-Iter select_randomly(Iter start, Iter end) {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    return select_randomly(start, end, gen);
-}
-
-inline double get_random_double(float start, float end)
-{
-	static std::random_device rd;
-	static std::mt19937 e2(rd());
-	std::uniform_real_distribution<> dist(0, 1);
-	return dist(e2);
-}
 
 // The function we want to execute on the new thread.
 inline void train_minibatch_thread(AgentNet* self)
 {
 	self->Learn();
 }
-
-inline int AgentNet::Perceive(cv::Mat* raw_state, int action)
-{		
-	// TODO: Store entire transition: s, a, r, s'
-	if(last_state_ != nullptr && should_train_)
-	{
-		if(iter_ != 0 && iter_ % replay_memory_ == 0)
-		{
-			purge_old_transitions(replay_memory_);
-		}
-		transitions_->add(last_state_, action); 
-	}
-
-	// TODO: Compute some validation statistics to judge performance
-
-	// set the patch for testing
-	std::vector<cv::Mat> frames;
-	frames.push_back(*raw_state);
-	std::vector<int> labels(frames.size());
-	frames_input_layer_->AddMatVector(frames, labels);
-	
-	std::vector<float> target_input(num_output_);
-	std::fill(target_input.begin(), target_input.end(), 0.0f);
-	std::vector<float> output;
-//	set_action_vector(action, actions);
-	std::vector<float> labels2(num_output_);
-	std::fill(labels2.begin(), labels2.end(), 0.0f);
-	target_input_layer_->Reset(&target_input[0], &labels2[0], minibatch_size_);
-
-	try
-	{
-		// Net forward
-		net_->ForwardPrefilled(nullptr);
-		const float * out_array = net_->blob_by_name("gtanet_fctop")->cpu_data(); // TODO store blob object and reuse pointer
-//		const float* out_array = results[0]->cpu_data();
-		// Store results in prev_results
-//		last_q_values_.erase(last_q_values_.begin(), last_q_values_.end());
-//		for(int i = 0; i < num_output_; i++)
-//		{
-//			last_q_values_.push_back(out_array[i]);
-//			if(iter_ % 40 == 0)
-//			{
-//				LOG(INFO) << "q values " << i << " = " << out_array[i];
-//			}
-//		}
-//		action = select_action_e_greedy(epsilon);
-	}
-	catch(...)
-	{
-		LOG(INFO) << "Problem forwarding, most likely Eltwise product memory violation";
-		// TODO: Figure out why this is happening, where exactly (reshape or action), how often it happens and fix it.
-		// TODO: If this gets ported off windows, may need to do this for handling memory exceptions: http://stackoverflow.com/a/918891/134077
-		action = last_action_;
-	}
-
-	if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
-	{
-		// Next iteration will be training, go to sleep by setting action to no-op
-		action = 0;
-	}
-
-	if(should_train_ && iter_ % train_iter_ == 0 && iter_ != 0)
-	{
-		if(should_train_async_)
-		{
-			std::thread(train_minibatch_thread, this).detach();	
-		}
-		else
-		{
-			try
-			{
-				Learn();
-			}
-			catch(const std::exception &exc)
-			{
-				LOG(INFO) << exc.what();
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				Learn();
-			}
-			catch(...)
-			{
-				LOG(INFO) << "error training, trying again";
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				Learn();
-			}
-		}
-	}
-
-	if(iter_  % 100 == 0)
-	{
-		LOG(INFO) << "iteration: " << iter_;
-	}
-
-
-	//deleteme//std::thread t1(train_minibatch_thread, this);
-	//deleteme//t1.join();
-
-	// TODO: Return the action selected
-	
-	last_state_ = raw_state;
-	last_action_ = action;
-
-	if(!should_train_)
-	{
-		// Image history gets deleted in Learn() during training
-		(*raw_state).release();
-		delete raw_state;
-	}
-
-	iter_ += 1;
-
-	return action;
-}
-
 
 //inline void train_minibatch_thread(NeuralQLearner* neural_q_learner)
 //{

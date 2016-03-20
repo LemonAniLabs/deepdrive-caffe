@@ -11,7 +11,7 @@ max_iter: 50000000
 #weight_decay: 0
 weight_decay: 0.0005
 display: 1
-solver_mode: GPU
+# solver_mode: CPU # This is set in AgentNet.h
 test_initialization: false
 
 ## TODO: Delete - should only be used for test validation which we don't do.

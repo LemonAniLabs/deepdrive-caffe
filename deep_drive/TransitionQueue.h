@@ -5,6 +5,7 @@
 #include <deque>
 #include <opencv2/core/mat.hpp>
 #include <array>
+#include "deep_drive.h"
 
 namespace deep_drive
 {
@@ -66,7 +67,7 @@ class TransitionQueue
 		while (!valid)
 		{
 			// TODO: Use better random here.
-			start = 1 + (rand() % images_.size() - 1); // start at 1 because of previous action
+			start = get_random_int(1, images_.size()); // start at 1 because of previous action
 
 			// Terminal states may not matter for us, but orig DQN prompted the following during original port:
 			// TODO: Make sure we are not at a terminal state

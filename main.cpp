@@ -318,7 +318,7 @@ void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
 	auto n_output = 9; // Also specified in model proto.
 	bool should_train_async = false;
 	bool should_manually_set_acceleration = false;
-	bool should_load_imagenet_pretrained = false;
+	bool should_load_imagenet_pretrained = true;
 	bool should_load_deep_drive_pretrained = false;
 	bool should_resume_deep_drive = true;
 	int train_iter = 75;
@@ -330,7 +330,7 @@ void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
 	std::string resume_path = "";
 	if(should_resume_deep_drive)
 	{
-		resume_path = "caffe_deep_drive_train_iter_1000_before_cops_again.solverstate";
+		resume_path = "caffe_deep_drive_train_iter_40000.solverstate";
 	}
 
 	agent_net = new deep_drive::AgentNet(state_dimension,
@@ -435,16 +435,17 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 	// DeepDrive
 	int step = 0;
-	AgentNet* agent_net = nullptr;
+	(*shared_agent_data).step = step;
+	AgentNet* agent = nullptr;
 	int action = 0;
-	double last_heading = 0;
+	int current_action = 0;
 	double last_speed = 0;
-	bool should_train = true;
+	bool should_train = false;
 	bool manual_action = false;
 
 	if(!should_skip_agent)
 	{
-		init_agent_net(agent_net, should_train, shared_agent_data, shared_reward_data);
+		init_agent_net(agent, should_train, shared_agent_data, shared_reward_data);
 	}
 
 	// Main loop
@@ -480,7 +481,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 		if(step % 100 == 0)
 		{
-			agent_net->reset_game_mod_options();
+			agent->reset_game_mod_options();
 		}
 
 		if(screen == nullptr)
@@ -499,11 +500,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 		else
 		{
-//			last_heading = shared_reward_data->heading;
-//			last_speed = shared_reward_data->speed;
 			if(step != 0) // Let heading and speed initialize.
 			{
-				int next_action = agent_net->Perceive(screen, action);
+				double speed_change = shared_reward_data->speed - last_speed;
+				current_action = agent->infer_action(shared_reward_data->rotational_velocity, speed_change);
+				int next_action = agent->Perceive(screen, current_action);
 				if(should_train)
 				{
 					// We are not controlling acceleration.
@@ -520,8 +521,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
 					shared_agent_data->action = next_action;
 				}
 			}
-
+			step++;
 			(*shared_agent_data).step = step;
+			last_speed = shared_reward_data->speed;
 
 			typedef std::chrono::milliseconds ms;
 			typedef std::chrono::duration<float> fsec;
@@ -529,7 +531,6 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
 			auto extra_wait = kStepDuration - elapsed_ms;
 			std::this_thread::sleep_for(extra_wait);
-			step++;
 		}
 
 		// TODO: test phase

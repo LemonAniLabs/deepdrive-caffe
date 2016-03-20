@@ -20,8 +20,8 @@ layer {
   transform_param {
     # Raw data pixels scale by 1 / 255 = 0.00390625
     # scale: 0.00390625
-    mirror: true
-    crop_size: 227
+    #mirror::::: true#
+    #crop_size: 227#
     #mean_file: "data/ilsvrc12/imagenet_mean.binaryproto"
     mean_value: 104
     mean_value: 117
@@ -393,30 +393,65 @@ layer {
   memory_data_param {
     # Batch size gets increased when sleeping vs perceiving.
     batch_size: 1
-    channels: 9
+    channels: 1
     height: 1
     width: 1
   }
 }
 
 
-layer {
-  name: "silence_layer"
-  type: "Silence"
-  bottom: "extraframeoutput"
-  bottom: "extratargetoutput"
-}
+#layer {
+#  name: "silence_layer"
+#  type: "Silence"
+#  bottom: "extraframeoutput"
+#  bottom: "extratargetoutput"
+#}
 
+#layer {
+#  name: "reshape"
+#  type: "Reshape"
+#  bottom: "target"
+#  top: "target_reshape"
+#  reshape_param {
+#    shape {
+## Mirror batch size dimension with 0
+#      dim: 0
+#      dim: 1
+#    }
+#  }
+#}
 
-## Taken from https://github.com/mhauskn/dqn/blob/master/dqn.prototxt
-## TODO: See how he calculates loss and uses it in q update
+#layer {
+#  name: "reshape"
+#  type: "Reshape"
+#  bottom: "gtanet_fctop"
+#  top: "gtanet_fctop_reshape"
+#  reshape_param {
+#    shape {
+## Mirror batch size dimension with 0
+#      dim: 0
+#      dim: 9
+#      dim: 1
+#      dim: 1
+#    }
+#  }
+#}
+
 layer {
   name: "loss"
-  type: "SoftmaxLoss"
+  type: "SoftmaxWithLoss"
   bottom: "gtanet_fctop"
   bottom: "target"
   top: "loss"
 }
+
+#layer {
+#  name: "loss"
+#  type: "EuclideanLoss"
+#  bottom: "gtanet_fctop_reshape"
+#  bottom: "target"
+#  top: "loss"
+#}
 
 # DriveNET 1 month IMAGENet augmented dataset training with inception architecture
 # Cityscape dataset with Daimler
