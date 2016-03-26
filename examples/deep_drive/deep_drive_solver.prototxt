@@ -3,7 +3,9 @@ solver_type: ADAM
 momentum: 0.9
 momentum2: 0.99
 #base_lr: 0.000001
-base_lr: 0.00001
+#base_lr: 0.00001
+#base_lr: 0.0001
+base_lr: 0.0002
 lr_policy: "fixed"
 snapshot: 1000
 snapshot_prefix: "caffe_deep_drive_train"
@@ -13,6 +15,9 @@ weight_decay: 0.0005
 display: 1
 # solver_mode: CPU # This is set in AgentNet.h
 test_initialization: false
+debug_info: false
+
+
 
 ## TODO: Delete - should only be used for test validation which we don't do.
 #### test_iter specifies how many forward passes the test should carry out.

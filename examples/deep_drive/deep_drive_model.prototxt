@@ -158,14 +158,14 @@ layer {
   type: "Convolution"
   bottom: "norm2"
   top: "conv3"
- param {
-   lr_mult: 0.01    # learning rate multiplier for the filters
-   decay_mult: 0.01 # weight decay multiplier for the filters
- }
- param {
-   lr_mult: 0.02  # learning rate multiplier for the biases
-   decay_mult: 0  # weight decay multiplier for the biases
- }
+  param {
+    lr_mult: 0.0005    # learning rate multiplier for the filters
+    decay_mult: 0.0005 # weight decay multiplier for the	 filters
+  }
+  param {
+    lr_mult: 0.002  # learning rate multiplier for the biases
+    decay_mult: 0  # weight decay multiplier for the biases
+  }
   convolution_param {
     num_output: 384
     pad: 1
@@ -194,14 +194,14 @@ layer {
   bottom: "conv3"
   top: "conv4"
   param {
-    lr_mult: 0.02    # learning rate multiplier for the filters
-    decay_mult: 0.02 # weight decay multiplier for the filters
+    lr_mult: 0.001    # learning rate multiplier for the filters
+    decay_mult: 0.001 # weight decay multiplier for the	 filters
   }
   param {
-    lr_mult: 0.04    # learning rate multiplier for the biases
-    decay_mult: 0    # weight decay multiplier for the biases
+    lr_mult: 0.002  # learning rate multiplier for the biases
+    decay_mult: 0  # weight decay multiplier for the biases
   }
-   convolution_param {
+  convolution_param {
     num_output: 384
     pad: 1
     kernel_size: 3
@@ -214,7 +214,6 @@ layer {
       type: "constant"
       value: 1
     }
-  }
 }
 
 layer {
@@ -229,14 +228,14 @@ layer {
   type: "Convolution"
   bottom: "conv4"
   top: "conv5"
- param {
-   lr_mult: 0.04    # learning rate multiplier for the filters
-   decay_mult: 0.04 # weight decay multiplier for the filters
- }
- param {
-   lr_mult: 0.08    # learning rate multiplier for the biases
-   decay_mult: 0 # weight decay multiplier for the biases
- }
+  param {
+    lr_mult: 0.001    # learning rate multiplier for the filters
+    decay_mult: 0.001 # weight decay multiplier for the filters
+  }
+  param {
+    lr_mult: 0.002  # learning rate multiplier for the biases
+    decay_mult: 0  # weight decay multiplier for the biases
+  }
   convolution_param {
     num_output: 256
     pad: 1
@@ -373,7 +372,7 @@ layer {
     decay_mult: 0 # weight decay multiplier for the biases
   }
   inner_product_param {
-    num_output: 9 # Number of output neurons
+    num_output: 3 # Number of output neurons
     weight_filler {
       type: "gaussian"
       std: 0.01
@@ -391,9 +390,9 @@ layer {
   top: "target"
   top: "extratargetoutput"
   memory_data_param {
-    # Batch size gets increased when sleeping vs perceiving.
+    # Batch size increases when sleeping vs perceiving.
     batch_size: 1
-    channels: 1
+    channels: 3
     height: 1
     width: 1
   }
@@ -437,21 +436,21 @@ layer {
 #  }
 #}
 
+#layer {
+#  name: "loss"
+#  type: "SoftmaxWithLoss"
+#  bottom: "gtanet_fctop"
+#  bottom: "target"
+#  top: "loss"
+#}
+
 layer {
   name: "loss"
-  type: "SoftmaxWithLoss"
+  type: "EuclideanLoss"
   bottom: "gtanet_fctop"
   bottom: "target"
   top: "loss"
 }
-
-#layer {
-#  name: "loss"
-#  type: "EuclideanLoss"
-#  bottom: "gtanet_fctop_reshape"
-#  bottom: "target"
-#  top: "loss"
-#}
 
 # DriveNET 1 month IMAGENet augmented dataset training with inception architecture
 # Cityscape dataset with Daimler

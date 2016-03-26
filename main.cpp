@@ -26,7 +26,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
-#include "deep_drive/AgentNet.h"
+#include "deep_drive/Agent.h"
 #include "deep_drive/deep_drive.h"
 #include <codecvt>
 #include <locale>
@@ -281,7 +281,7 @@ float get_reward(SharedRewardData* rewardData)
 	return reward;
 }
 
-void load_pretrained_net(deep_drive::AgentNet*& agent_net, std::string path)
+void load_pretrained_net(deep_drive::Agent*& agent_net, std::string path)
 {
 	bool weights_loaded = false;
 	while(!weights_loaded)
@@ -299,63 +299,56 @@ void load_pretrained_net(deep_drive::AgentNet*& agent_net, std::string path)
 	}
 }
 
-void init_agent_net(deep_drive::AgentNet*& agent_net, bool should_train,
-	SharedAgentControlData* shared_agent_control, SharedRewardData* shared_reward)
+void init_agent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_control, 
+	SharedRewardData* shared_reward)
 {
-	// Number of actions
-	// 0 None
-	// 1 Left
-	// 2 Rifht
-	// 3 Forward
-	// 4 Backward
-	// 5 Left forward
-	// 6 Left backward
-	// 7 Right forward
-	// 8 Right backward
+	// Agent settings
+	auto replay_memory                     = 1000;  // Frames are about 100k each. So this adds up fast.
+	auto minibatch_size                    = 128;   // Needs to be fast enough to act between batches.
+	auto num_output                        = 3;     // Also specified in model proto.
+	int train_iter                         = 75;    // Train every x iterations - callabrated with reload game time, but no longer necessary
+//	int clone_iter                         = 1000;  // Clone every x iterations - DQN relic
+	bool should_train                      = false; 
+	bool should_train_async                = false;
+	bool debug_info                        = false; // Also in solver for debug info on the backward pass
 
-	auto replay_memory = 1000; // Frames are about 100k. So this adds up fast.
-	auto minibatch_size = 64; // Needs to be fast enough to act between batches.
-	auto n_output = 9; // Also specified in model proto.
-	bool should_train_async = false;
-	bool should_manually_set_acceleration = false;
-	bool should_load_imagenet_pretrained = true;
+	bool should_resume_deep_drive          = false;
+	std::string resume_solver_path         = "caffe_deep_drive_train_iter_86000.solverstate";
+	
+	bool should_load_imagenet_pretrained   = false;
 	bool should_load_deep_drive_pretrained = false;
-	bool should_resume_deep_drive = true;
-	int train_iter = 75;
-	int clone_iter = 1000;
+	std::string weight_path_deep_drive     = "caffe_deep_drive_train_iter_111000.caffemodel";
+	
 
-	// TODO: figure out what this is. it's 7056 in DQN for some reason. 160 * 210 pixels = 33600
-	auto state_dimension = 1;
-
-	std::string resume_path = "";
-	if(should_resume_deep_drive)
+	if( ! should_resume_deep_drive)
 	{
-		resume_path = "caffe_deep_drive_train_iter_40000.solverstate";
+		resume_solver_path = "";
 	}
 
-	agent_net = new deep_drive::AgentNet(state_dimension,
-		replay_memory, minibatch_size, n_output,
-		"examples/deep_drive/deep_drive_solver.prototxt", should_train, train_iter,
-		should_train_async, should_manually_set_acceleration, clone_iter, 
-		shared_agent_control, shared_reward, resume_path);
+	agent = new deep_drive::Agent(replay_memory, minibatch_size, num_output,
+		"examples/deep_drive/deep_drive_solver.prototxt", 
+		"examples/deep_drive/deep_drive_model.prototxt",
+		should_train, train_iter,
+		should_train_async, 
+//		clone_iter, 
+		shared_agent_control, shared_reward, resume_solver_path, debug_info);
 	
 	(*shared_agent_control).should_reload_game = true;
-	agent_net->wait_to_reload_game();
-	agent_net->wait_to_toggle_pause_game();
+	agent->wait_to_reload_game();
+	agent->wait_to_toggle_pause_game();
 
 	// Fine tune
 	std::string weight_path_image_net = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
-	std::string weight_path_deep_drive = "caffe_deep_drive_train_iter_1000_before_cops_again.caffemodel";
 	//std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
 	if(should_load_deep_drive_pretrained)
 	{
-		load_pretrained_net(agent_net, weight_path_deep_drive);
+		load_pretrained_net(agent, weight_path_deep_drive);
 	}	
 	else if(should_load_imagenet_pretrained)
 	{
-		load_pretrained_net(agent_net, weight_path_image_net);
+		load_pretrained_net(agent, weight_path_image_net);
 	}
-	agent_net->wait_to_toggle_pause_game();
+	agent->wait_to_toggle_pause_game();
 }
 
 SharedAgentControlData* wait_for_auto_it_sharing()
@@ -379,6 +372,27 @@ SharedRewardData* wait_for_shared_reward_data()
 		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 	}
 	return shared_reward_data;
+}
+
+void enforce_period(std::chrono::system_clock::time_point start_time)
+{
+	typedef std::chrono::milliseconds ms;
+	typedef std::chrono::duration<float> fsec;
+	auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+	auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+	auto extra_wait = kStepDuration - elapsed_ms;
+	std::this_thread::sleep_for(extra_wait);
+}
+
+void saveMeta(SharedRewardData* shared_reward_data, int step_in)
+{
+	int step = step_in + 63361;
+	std::ofstream myfile;
+	myfile.open ("D:\\data\\gtav\\4hz_spin_speed_001\\dat\\dat_" + std::to_string(step) + ".txt");
+	myfile << "step: " <<  std::to_string(step) << 
+		", spin: " << std::to_string(shared_reward_data->spin) <<
+		", speed: " << std::to_string(shared_reward_data->speed);
+	myfile.close();
 }
 
 // the entry point for any Windows program
@@ -433,20 +447,21 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	bool should_show_image = false;
 	bool should_skip_agent = false;
 
-	// DeepDrive
-	int step = 0;
-	(*shared_agent_data).step = step;
-	AgentNet* agent = nullptr;
+	Agent* agent = nullptr;
+
+	if( ! should_skip_agent)
+	{
+		init_agent(agent, shared_agent_data, shared_reward_data);
+	}
+
 	int action = 0;
 	int current_action = 0;
+	int step = 0;
+	(*shared_agent_data).step = step;
+	int save_image_every = 1;
+	int save_meta_every = 1;
 	double last_speed = 0;
-	bool should_train = false;
-	bool manual_action = false;
-
-	if(!should_skip_agent)
-	{
-		init_agent_net(agent, should_train, shared_agent_data, shared_reward_data);
-	}
+	bool manual_action = true;
 
 	// Main loop
 	MSG msg;
@@ -473,15 +488,20 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				showImage(*screen);
 			}
 
-			if(step % 100 == 0)
+			if(step % save_image_every == 0)
 			{
 				saveImage(*screen, step);
+			}
+
+			if(step % save_meta_every == 0)
+			{
+				saveMeta(shared_reward_data, step);
 			}
 		}
 
 		if(step % 100 == 0)
 		{
-			agent->reset_game_mod_options();
+			reset_game_mod_options(shared_reward_data);
 		}
 
 		if(screen == nullptr)
@@ -500,12 +520,17 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 		else
 		{
-			if(step != 0) // Let heading and speed initialize.
+			if(step == 0) // Let heading and speed initialize.
 			{
+				last_speed = shared_reward_data->speed;
+			}
+			else {
 				double speed_change = shared_reward_data->speed - last_speed;
-				current_action = agent->infer_action(shared_reward_data->rotational_velocity, speed_change);
-				int next_action = agent->Perceive(screen, current_action);
-				if(should_train)
+				last_speed = shared_reward_data->speed;
+//				current_action = agent->infer_action(shared_reward_data->rotational_velocity, speed_change);
+				Action next_action = agent->Perceive(screen, shared_reward_data->spin, 
+					shared_reward_data->speed, speed_change);
+				if(agent->get_should_train())
 				{
 					// We are not controlling acceleration.
 					(*shared_agent_data).heading_achieved = true;
@@ -518,24 +543,19 @@ int WINAPI WinMain(HINSTANCE hInstance,
 						(*shared_agent_data).heading_achieved = true;
 						(*shared_agent_data).speed_achieved = true;						
 					}
-					shared_agent_data->action = next_action;
+					(*shared_reward_data).desired_spin = next_action.spin;
+					(*shared_reward_data).desired_speed = next_action.speed;
+					(*shared_reward_data).desired_speed_change = next_action.speed_change;
+					// TODO: Set the action based on current spin and speed and desired spin and speed.
 				}
 			}
-			step++;
-			(*shared_agent_data).step = step;
-			last_speed = shared_reward_data->speed;
-
-			typedef std::chrono::milliseconds ms;
-			typedef std::chrono::duration<float> fsec;
-			auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-			auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
-			auto extra_wait = kStepDuration - elapsed_ms;
-			std::this_thread::sleep_for(extra_wait);
 		}
 
-		// TODO: test phase
-		// Start from beginning and test total distance in 2 minutes.
-		// Save the net with best performance.
+		step++;
+		(*shared_agent_data).step = step;
+
+		enforce_period(start_time);
+
 	}
 
 	delete shared_reward_data;
@@ -1117,15 +1137,16 @@ void showImage(cv::Mat img)
 	cv::waitKey(0);
 }
 
-void saveImage(cv::Mat img, int iter)
+void saveImage(cv::Mat img, int step_in)
 {
+	int step = step_in + 88986;
 	if (! img.data) // Check for invalid input
 	{
 		std::cout << "No image data" << std::endl ;
 		return;
 	}
 	// Save the frame into a file
-	cv::imwrite("screenshot_" + std::to_string(iter) + ".bmp", img);
+	cv::imwrite("D:\\data\\gtav\\4hz_spin_speed_001\\img\\img_" + std::to_string(step) + ".bmp", img);
 }
 
 bool copyTextureToMemory(ID3D11Texture2D* tex, BYTE *& imcopy)

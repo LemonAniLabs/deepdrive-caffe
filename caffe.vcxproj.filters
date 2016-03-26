@@ -868,10 +868,10 @@
     <ClInclude Include="helper_string.h">
       <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
-    <ClInclude Include="deep_drive\AgentNet.h">
+    <ClInclude Include="deep_drive\deep_drive.h">
       <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
-    <ClInclude Include="deep_drive\deep_drive.h">
+    <ClInclude Include="deep_drive\Agent.h">
       <Filter>Source Files\deep_drive</Filter>
     </ClInclude>
   </ItemGroup>

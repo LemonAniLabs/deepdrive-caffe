@@ -13,32 +13,34 @@ namespace deep_drive
 struct Transition
 {
 	cv::Mat* image;
-	int action;
+//	int action;
+	double spin;
+	double speed; // Norm of 3D speed
+	double speed_change;
 };
 
 class TransitionQueue
 {		
-	int state_dim_;
-	int replay_memory_;
 	std::deque<cv::Mat*> images_;
-	std::deque<int>      actions_;
+	std::deque<double>   spins_;
+	std::deque<double>   speeds_;
+	std::deque<double>   speed_changes_;
 
 	public:
-	TransitionQueue(int state_dim, int replay_memory)
+	TransitionQueue()
 	{
-		state_dim_ = state_dim;
-		replay_memory_ = replay_memory;
-
 		// Image queue
 		images_ = std::deque<cv::Mat*>(); // No size param, let it grow lazily.
 	}
 
 	~TransitionQueue() {}
 
-	void add(cv::Mat* m, int action) 
+	void add(cv::Mat* m, double spin, double speed, double speed_change) 
 	{
 		images_.push_back(m);
-		actions_.push_back(action);
+		spins_.push_back(spin);
+		speeds_.push_back(speed);
+		speed_changes_.push_back(speed_change);
 	}
 
 	int size() const
@@ -49,7 +51,9 @@ class TransitionQueue
 	void release()
 	{
 		release_front(images_);
-		actions_.pop_front();
+		spins_.pop_front();
+		speeds_.pop_front();
+		speed_changes_.pop_front();
 	}
 
 	template <typename Dtype>
@@ -61,13 +65,14 @@ class TransitionQueue
 
 	Transition sample_one()
 	{
-		auto valid = false;
+//		auto valid = true;
+		auto start = get_random_int(0, images_.size() - 1);
 		// Get some random starting point and make sure the size left is okay.
-		auto start = 0;
-		while (!valid)
-		{
+//		auto start = 0;
+//		while (!valid)
+//		{
 			// TODO: Use better random here.
-			start = get_random_int(1, images_.size()); // start at 1 because of previous action
+			 // start at 1 because of previous action
 
 			// Terminal states may not matter for us, but orig DQN prompted the following during original port:
 			// TODO: Make sure we are not at a terminal state
@@ -75,16 +80,19 @@ class TransitionQueue
 			//       with prob nonTermProb.
 			// TODO: Discard non-terminal, non-reward *next*-states with prob 1 - nonTermProb
 
-			if(start + 1 < images_.size())
-			{
-				// Make sure s2 is available for transition
-				valid = true;
-			}
-		}
+//			if(start + 1 < images_.size())
+//			{
+//				// Make sure s2 is available for transition
+//				valid = true;
+//			}
+//		}
 
 		Transition ret;
 		ret.image  = images_[start];
-		ret.action = actions_[start - 1];
+
+		ret.spin         = spins_        [start];
+		ret.speed        = speeds_       [start];
+		ret.speed_change = speed_changes_[start];
 
 		return ret;
 	}

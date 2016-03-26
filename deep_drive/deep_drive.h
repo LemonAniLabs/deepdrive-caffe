@@ -5,25 +5,8 @@
 #include <opencv2/core/mat.hpp>
 #include <random>
 #include <caffe/util/io.hpp>
-
-//class MyClass
-//{
-//public:
-//	MyClass();
-//	~MyClass();
-//private:
-//
-//};
-//
-//inline MyClass::MyClass()
-//{
-//	int y = 1;
-//}
-//
-//inline MyClass::~MyClass()
-//{
-//	int x = 1;
-//}
+#include <chrono>
+#include <thread>
 
 namespace deep_drive{
 	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
@@ -34,7 +17,8 @@ namespace deep_drive{
 		LONGLONG step;
 		bool should_reload_game;
 		bool should_toggle_pause_game;
-		double heading_change;
+		double desired_spin;
+		double desired_speed;
 		double speed_change;
 		bool heading_achieved;
 		bool speed_achieved;
@@ -49,9 +33,10 @@ namespace deep_drive{
 		bool should_reset_agent;
 		double heading;
 		double speed;
-		double desired_heading; // for directly setting heading, intermediate step to real control
+		double desired_spin; // for directly setting spin, intermediate step to real control
 		double desired_speed; // for directly setting speed, intermediate step to real control
-		double rotational_velocity;
+		double desired_speed_change; // for directly setting speed change, intermediate step to real control
+		double spin;
 	};
 
 
@@ -84,6 +69,28 @@ namespace deep_drive{
 		auto random_integer = uni(rng);
 
 		return random_integer;
+	}
+
+	struct Action
+	{
+		double spin;
+		double speed; // Norm of 3D speed
+		double speed_change;
+	};
+
+	inline void wait_to_reset_game_mod_options(SharedRewardData* shared_reward_memory)
+	{
+		while ((*shared_reward_memory).should_reset_agent == true)
+		{
+			output("Waiting to reset game mod options...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} 
+	}
+
+	inline void reset_game_mod_options(SharedRewardData* shared_reward_memory)
+	{
+		(*shared_reward_memory).should_reset_agent = true;
+		wait_to_reset_game_mod_options(shared_reward_memory);
 	}
 }
 

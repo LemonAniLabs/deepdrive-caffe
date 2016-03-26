@@ -346,7 +346,7 @@
     <None Include="tools\extra\summarize.py" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="deep_drive\AgentNet.h" />
+    <ClInclude Include="deep_drive\Agent.h" />
     <ClInclude Include="deep_drive\deep_drive.h" />
     <ClInclude Include="dqn\TransitionQueue.h" />
     <ClInclude Include="helper_cuda.h" />
