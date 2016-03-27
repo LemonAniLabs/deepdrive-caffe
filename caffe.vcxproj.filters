@@ -327,6 +327,9 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files\deep_drive</Filter>
     </ClCompile>
+    <ClCompile Include="src\caffe\layers\smooth_L1_loss_layer.cpp">
+      <Filter>Source Files\layers</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -565,6 +568,9 @@
     </CudaCompile>
     <CudaCompile Include="src\caffe\solvers\adagrad_solver.cu">
       <Filter>Source Files\solvers</Filter>
+    </CudaCompile>
+    <CudaCompile Include="include\caffe\layers\smooth_L1_loss_layer.cu">
+      <Filter>Source Files\layers</Filter>
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
@@ -873,6 +879,9 @@
     </ClInclude>
     <ClInclude Include="deep_drive\Agent.h">
       <Filter>Source Files\deep_drive</Filter>
+    </ClInclude>
+    <ClInclude Include="include\caffe\layers\fast_rcnn_layers.hpp">
+      <Filter>Header Files\layers</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

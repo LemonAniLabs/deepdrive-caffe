@@ -305,17 +305,18 @@ void init_agent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_
 	// Agent settings
 	auto replay_memory                     = 1000;  // Frames are about 100k each. So this adds up fast.
 	auto minibatch_size                    = 128;   // Needs to be fast enough to act between batches.
-	auto num_output                        = 3;     // Also specified in model proto.
+	auto num_output                        = 4;     // Also specified in model proto in target and fctop layers
 	int train_iter                         = 75;    // Train every x iterations - callabrated with reload game time, but no longer necessary
-//	int clone_iter                         = 1000;  // Clone every x iterations - DQN relic
-	bool should_train                      = false; 
+	bool should_train                      = true; 
 	bool should_train_async                = false;
 	bool debug_info                        = false; // Also in solver for debug info on the backward pass
 
 	bool should_resume_deep_drive          = false;
-	std::string resume_solver_path         = "caffe_deep_drive_train_iter_86000.solverstate";
+	std::string resume_solver_path         = "caffe_deep_drive_train_iter_1000.solverstate";
 	
-	bool should_load_imagenet_pretrained   = false;
+	bool should_load_imagenet_pretrained   = true;
+	std::string weight_path_image_net      = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
+
 	bool should_load_deep_drive_pretrained = false;
 	std::string weight_path_deep_drive     = "caffe_deep_drive_train_iter_111000.caffemodel";
 	
@@ -330,7 +331,6 @@ void init_agent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_
 		"examples/deep_drive/deep_drive_model.prototxt",
 		should_train, train_iter,
 		should_train_async, 
-//		clone_iter, 
 		shared_agent_control, shared_reward, resume_solver_path, debug_info);
 	
 	(*shared_agent_control).should_reload_game = true;
@@ -338,8 +338,6 @@ void init_agent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_
 	agent->wait_to_toggle_pause_game();
 
 	// Fine tune
-	std::string weight_path_image_net = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
-	//std::string weight_path_dqn = "caffe_dqn_train_iter_10000_84_epsilon.caffemodel";
 	if(should_load_deep_drive_pretrained)
 	{
 		load_pretrained_net(agent, weight_path_deep_drive);
@@ -386,7 +384,7 @@ void enforce_period(std::chrono::system_clock::time_point start_time)
 
 void saveMeta(SharedRewardData* shared_reward_data, int step_in)
 {
-	int step = step_in + 63361;
+	int step = step_in + kSaveDataStep; // 63361; // 88986
 	std::ofstream myfile;
 	myfile.open ("D:\\data\\gtav\\4hz_spin_speed_001\\dat\\dat_" + std::to_string(step) + ".txt");
 	myfile << "step: " <<  std::to_string(step) << 
@@ -458,8 +456,9 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	int current_action = 0;
 	int step = 0;
 	(*shared_agent_data).step = step;
+	bool should_save_data = false;
 	int save_image_every = 1;
-	int save_meta_every = 1;
+	int save_meta_every = save_image_every;
 	double last_speed = 0;
 	bool manual_action = true;
 
@@ -488,15 +487,19 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				showImage(*screen);
 			}
 
-			if(step % save_image_every == 0)
+			if(should_save_data)
 			{
-				saveImage(*screen, step);
+				if(step % save_image_every == 0)
+				{
+					saveImage(*screen, step);
+				}
+
+				if(step % save_meta_every == 0)
+				{
+					saveMeta(shared_reward_data, step);
+				}				
 			}
 
-			if(step % save_meta_every == 0)
-			{
-				saveMeta(shared_reward_data, step);
-			}
 		}
 
 		if(step % 100 == 0)
@@ -1139,7 +1142,7 @@ void showImage(cv::Mat img)
 
 void saveImage(cv::Mat img, int step_in)
 {
-	int step = step_in + 88986;
+	int step = step_in + kSaveDataStep;
 	if (! img.data) // Check for invalid input
 	{
 		std::cout << "No image data" << std::endl ;

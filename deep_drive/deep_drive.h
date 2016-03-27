@@ -9,6 +9,10 @@
 #include <thread>
 
 namespace deep_drive{
+	 int kSaveDataStep = 88986; // 63361;
+
+	 double kSpeedCoefficient = 1 / 20;
+
 	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
 	struct SharedAgentControlData
 	{
