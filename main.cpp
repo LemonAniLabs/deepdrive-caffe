@@ -41,6 +41,7 @@
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 #include <future>
+#include <direct.h>
 
 using namespace deep_drive;
 
@@ -129,7 +130,7 @@ void copyBackBufferToMemory(BYTE *& imcopy);
 bool cudaCopyBackBufferToMemory(ID3D11Texture2D* pSurface, BYTE *& imcopy);
 cv::Mat* get_screen();
 void showImage(cv::Mat img);
-void saveImage(cv::Mat img, int iter);
+void saveImage(cv::Mat img, int iter, std::string folder_name);
 
 double previousDistance = std::numeric_limits<double>::min();
 double previouslyTraveled = std::numeric_limits<double>::min();
@@ -382,15 +383,38 @@ void enforce_period(std::chrono::system_clock::time_point start_time)
 	std::this_thread::sleep_for(extra_wait);
 }
 
-void saveMeta(SharedRewardData* shared_reward_data, int step_in)
+void saveMeta(SharedRewardData* shared_reward_data, int step_in, std::string folder_name)
 {
 	int step = step_in + kSaveDataStep; // 63361; // 88986
 	std::ofstream myfile;
-	myfile.open ("D:\\data\\gtav\\4hz_spin_speed_001\\dat\\dat_" + std::to_string(step) + ".txt");
+	myfile.open (folder_name + "dat_" + std::to_string(step) + ".txt");
 	myfile << "step: " <<  std::to_string(step) << 
 		", spin: " << std::to_string(shared_reward_data->spin) <<
 		", speed: " << std::to_string(shared_reward_data->speed);
 	myfile.close();
+}
+
+std::string kSaveInputFolderName = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
+void saveInput(SharedRewardData* shared_reward_data, int step, bool should_save_data, 
+	int save_image_every, int save_meta_every, cv::Mat* screen)
+{
+	if(should_save_data)
+	{
+		if(step == 0)
+		{
+			_mkdir(kSaveInputFolderName.data());
+		}
+
+		if(step % save_image_every == 0)
+		{
+			saveImage(*screen, step, kSaveInputFolderName);
+		}
+
+		if(step % save_meta_every == 0)
+		{
+			saveMeta(shared_reward_data, step, kSaveInputFolderName);
+		}				
+	}
 }
 
 // the entry point for any Windows program
@@ -487,19 +511,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				showImage(*screen);
 			}
 
-			if(should_save_data)
-			{
-				if(step % save_image_every == 0)
-				{
-					saveImage(*screen, step);
-				}
-
-				if(step % save_meta_every == 0)
-				{
-					saveMeta(shared_reward_data, step);
-				}				
-			}
-
+			saveInput(shared_reward_data, step, should_save_data, save_image_every,
+				save_meta_every, screen);
 		}
 
 		if(step % 100 == 0)
@@ -1140,7 +1153,7 @@ void showImage(cv::Mat img)
 	cv::waitKey(0);
 }
 
-void saveImage(cv::Mat img, int step_in)
+void saveImage(cv::Mat img, int step_in, std::string folder_name)
 {
 	int step = step_in + kSaveDataStep;
 	if (! img.data) // Check for invalid input
@@ -1149,7 +1162,7 @@ void saveImage(cv::Mat img, int step_in)
 		return;
 	}
 	// Save the frame into a file
-	cv::imwrite("D:\\data\\gtav\\4hz_spin_speed_001\\img\\img_" + std::to_string(step) + ".bmp", img);
+	cv::imwrite(folder_name + "img_" + std::to_string(step) + ".bmp", img);
 }
 
 bool copyTextureToMemory(ID3D11Texture2D* tex, BYTE *& imcopy)

@@ -9,7 +9,7 @@
 #include <thread>
 
 namespace deep_drive{
-	 int kSaveDataStep = 88986; // 63361;
+	 int kSaveDataStep = 0; // 88986; // 63361; // Using folder now, first dataset has different sessions at these frames though.
 
 	 double kSpeedCoefficient = 1 / 20;
 
@@ -95,6 +95,19 @@ namespace deep_drive{
 	{
 		(*shared_reward_memory).should_reset_agent = true;
 		wait_to_reset_game_mod_options(shared_reward_memory);
+	}
+
+	// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
+	inline std::string current_date_time() {
+		time_t     now = time(0);
+		struct tm  tstruct;
+		char       buf[80];
+		tstruct = *localtime(&now);
+		// Visit http://en.cppreference.com/w/cpp/chrono/c/strftime
+		// for more information about date/time format
+		strftime(buf, sizeof(buf), "%Y-%m-%d.%S", &tstruct);
+
+		return buf;
 	}
 }
 
