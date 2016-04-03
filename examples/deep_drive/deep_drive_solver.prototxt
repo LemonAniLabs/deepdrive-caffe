@@ -6,6 +6,7 @@ momentum2: 0.99
 #base_lr: 0.00001
 #base_lr: 0.0001
 base_lr: 0.0002
+#base_lr: 0.00002
 lr_policy: "fixed"
 snapshot: 1000
 snapshot_prefix: "caffe_deep_drive_train"

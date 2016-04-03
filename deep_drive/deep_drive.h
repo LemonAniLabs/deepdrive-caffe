@@ -7,11 +7,32 @@
 #include <caffe/util/io.hpp>
 #include <chrono>
 #include <thread>
+#include <direct.h>
 
 namespace deep_drive{
-	 int kSaveDataStep = 0; // 88986; // 63361; // Using folder now, first dataset has different sessions at these frames though.
+	const int kSaveDataStep = 0; // 88986; // 63361; // Using folder now, first dataset has different sessions at these frames though.
 
-	 double kSpeedCoefficient = 1 / 20;
+
+	// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
+	inline std::string current_date_time() {
+		time_t     now = time(0);
+		struct tm  tstruct;
+		char       buf[80];
+		tstruct = *localtime(&now);
+		// Visit http://en.cppreference.com/w/cpp/chrono/c/strftime
+		// for more information about date/time format
+		strftime(buf, sizeof(buf), "%Y_%m_%d_%H_%M_%S", &tstruct);
+
+		return buf;
+	}
+
+	std::string kSaveInputFolderName = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
+	bool createdSavedInputFolder = false;
+
+	const double kSpeedCoefficient = 0.05;
+	const double kAccumulatedSpinThreshold = 0.2;
+	const double kSpeedThreshold = 2;
+
 
 	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
 	struct SharedAgentControlData
@@ -23,7 +44,8 @@ namespace deep_drive{
 		bool should_toggle_pause_game;
 		double desired_spin;
 		double desired_speed;
-		double speed_change;
+		double desired_speed_change;
+		double desired_direction;
 		bool heading_achieved;
 		bool speed_achieved;
 	};
@@ -40,6 +62,7 @@ namespace deep_drive{
 		double desired_spin; // for directly setting spin, intermediate step to real control
 		double desired_speed; // for directly setting speed, intermediate step to real control
 		double desired_speed_change; // for directly setting speed change, intermediate step to real control
+		double desired_direction;
 		double spin;
 	};
 
@@ -75,11 +98,23 @@ namespace deep_drive{
 		return random_integer;
 	}
 
+	inline double get_random_double(double start, double end)
+	{
+		std::random_device rd;     // only used once to initialise (seed) engine
+		std::mt19937 rng(rd());    // random-number engine used (Mersenne-Twister in this case)
+		std::uniform_real_distribution<double> uni(start, end); // guaranteed unbiased
+
+		auto random_double = uni(rng);
+
+		return random_double;
+	}
+
 	struct Action
 	{
 		double spin;
 		double speed; // Norm of 3D speed
 		double speed_change;
+		double direction;
 	};
 
 	inline void wait_to_reset_game_mod_options(SharedRewardData* shared_reward_memory)
@@ -97,17 +132,50 @@ namespace deep_drive{
 		wait_to_reset_game_mod_options(shared_reward_memory);
 	}
 
-	// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
-	inline std::string current_date_time() {
-		time_t     now = time(0);
-		struct tm  tstruct;
-		char       buf[80];
-		tstruct = *localtime(&now);
-		// Visit http://en.cppreference.com/w/cpp/chrono/c/strftime
-		// for more information about date/time format
-		strftime(buf, sizeof(buf), "%Y-%m-%d.%S", &tstruct);
+	inline void saveImage(cv::Mat img, int iter, std::string folder_name)
+	{
+		int step = iter + kSaveDataStep;
+		if (! img.data) // Check for invalid input
+		{
+			std::cout << "No image data" << std::endl ;
+			return;
+		}
+		// Save the frame into a file
+		cv::imwrite(folder_name + "img_" + std::to_string(step) + ".bmp", img);
+	}
 
-		return buf;
+	inline void saveMeta(SharedRewardData* shared_reward_data, int step_in, std::string folder_name)
+	{
+		int step = step_in + kSaveDataStep; // 63361; // 88986
+		std::ofstream myfile;
+		myfile.open (folder_name + "dat_" + std::to_string(step) + ".txt");
+		myfile << "step: " <<  std::to_string(step) << 
+			", spin: " << std::to_string(shared_reward_data->spin) <<
+			", speed: " << std::to_string(shared_reward_data->speed);
+		myfile.close();
+	}
+
+	inline void saveInput(SharedRewardData* shared_reward_data, int step, bool should_save_data, 
+		int save_input_every, cv::Mat* screen)
+	{
+		if(should_save_data)
+		{
+			if( ! createdSavedInputFolder)
+			{
+				_mkdir(kSaveInputFolderName.data());
+				createdSavedInputFolder = true;
+			}
+
+			if(step % save_input_every == 0)
+			{
+				saveImage(*screen, step, kSaveInputFolderName);
+			}
+
+			if(step % save_input_every == 0)
+			{
+				saveMeta(shared_reward_data, step, kSaveInputFolderName);
+			}				
+		}
 	}
 }
 

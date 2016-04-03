@@ -32,7 +32,7 @@ class Agent
 {
 	TransitionQueue* transitions_;
 	int minibatch_size_;  // Needs to be fast enough to act between batches.
-	int replay_memory_;
+	int replay_size_;
 	std::atomic<bool> queue_lock_;
 	caffe::Net<float>* net_;
 //	boost::shared_ptr<caffe::Net<float>> clone_net_;
@@ -64,6 +64,8 @@ class Agent
 	bool debug_info_;
 	SharedAgentControlData* shared_agent_control_;
 	SharedRewardData* shared_reward_;
+	double replay_chance_;
+	int purge_every_;
 
 	public:
 	Agent(int replay_memory, int minibatch_size,
@@ -72,11 +74,12 @@ class Agent
 		bool should_train_async,
 //		int clone_iter, 
 		SharedAgentControlData* shared_agent_control,
-		SharedRewardData* shared_reward, std::string resume_solver_path, bool debug_info)
+		SharedRewardData* shared_reward, std::string resume_solver_path, bool debug_info,
+		double replay_chance, int purge_every)
 	{
 		transitions_ = new TransitionQueue();
 		minibatch_size_ = minibatch_size;
-		replay_memory_ = replay_memory;
+		replay_size_ = replay_memory;
 		num_output_ = num_output;
 		should_train_ = should_train; // TODO: Change to should_train
 		should_train_async_ = should_train_async;
@@ -85,6 +88,8 @@ class Agent
 		shared_agent_control_ = shared_agent_control;
 		shared_reward_ = shared_reward;
 		debug_info_ = debug_info;
+		replay_chance_ = replay_chance;
+		purge_every_ = purge_every;
 
 		for(auto i = 0; i < num_output; i++)
 		{
@@ -315,7 +320,7 @@ class Agent
 	{
 		return (
 			(! should_train_async_ || get_queue_lock()) && 
-			(transitions_->size() >= minibatch_size_)
+			(transitions_->size() >= replay_size_)
 		);
 	}
 
@@ -350,7 +355,7 @@ class Agent
 	void CompleteLearning()
 	{
 		int train_count = 0;
-		purge_old_transitions(replay_memory_);
+		purge_old_transitions(replay_size_);
 
 		// Get target tensors for minibatch - r + gamma *  max_a2( Q(s2,a2) )
 
@@ -433,7 +438,7 @@ class Agent
 			CompleteLearning();
 			learned = true;
 		}
-		purge_old_transitions(replay_memory_ - train_iter_);
+		purge_old_transitions(replay_size_ - train_iter_);
 //		reset_agent();
 		if(learned)
 		{
@@ -464,8 +469,8 @@ class Agent
 
 		if(best_actions.size() > 1)
 		{
-			action = *select_randomly(best_actions.begin(), best_actions.end());					
-		} 
+			action = *select_randomly(best_actions.begin(), best_actions.end());
+		}
 		else
 		{
 			action = best_actions[0];
@@ -475,16 +480,19 @@ class Agent
 
 	Action Perceive(cv::Mat* raw_state, double current_spin, double current_speed, 
 		double current_speed_heading)
-	{		
-		// TODO: Store entire transition: s, a, r, s'
+	{
 		if(last_state_ != nullptr && should_train_)
 		{
-			if(iter_ != 0 && iter_ % replay_memory_ == 0)
+			if(iter_ != 0 && iter_ % purge_every_ == 0)
 			{
-				purge_old_transitions(replay_memory_);
+				purge_old_transitions(replay_size_);
 			}
-			transitions_->add(last_state_, current_spin, current_speed, 
-				current_speed_heading); 
+			if(get_random_double(0.0, 1.0) <= replay_chance_)
+			{
+				transitions_->add(last_state_, current_spin, current_speed, 
+					current_speed_heading);
+//				saveInput(shared_reward_, iter_, true, 1, raw_state);
+			}
 		}
 
 		// TODO: Compute some validation statistics to judge performance
@@ -522,6 +530,7 @@ class Agent
 			next_action.spin         = last_action_values_[0];
 			next_action.speed        = last_action_values_[1];
 			next_action.speed_change = last_action_values_[2];
+			next_action.direction    = last_action_values_[3];
 		}
 		catch(...)
 		{
@@ -593,51 +602,61 @@ class Agent
 		return next_action;
 	}
 
-	int infer_action(double rotational_velocity, double speed_change)
+	int infer_action(double& desired_spin, double desired_speed_change, double desired_speed, double current_speed)
 	{
-		if(rotational_velocity == 0 && speed_change == 0)
+		bool spin_is_small = (desired_spin <= kAccumulatedSpinThreshold) && (desired_spin >= -kAccumulatedSpinThreshold);
+		float speed_diff = desired_speed - current_speed;
+		float speed_span = abs(speed_diff);
+		
+		if(spin_is_small && speed_span <= kSpeedThreshold)
 		{
 			// None
 			return 0;
 		}
-		else if(rotational_velocity > 0 && speed_change == 0)
+		else if(desired_spin > kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
 		{
 			// Left
+			desired_spin = 0;
 			return 1;
 		}
-		else if(rotational_velocity < 0 && speed_change == 0)
+		else if(desired_spin < -kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
 		{
 			// Right
+			desired_spin = 0;
 			return 2;
 		}
-		else if(rotational_velocity == 0 && speed_change > 0)
+		else if(spin_is_small && speed_diff > kSpeedThreshold)
 		{
 			// Forward
 			return 3;
 		}
-		else if(rotational_velocity == 0 && speed_change < 0)
+		else if(spin_is_small && speed_diff < kSpeedThreshold)
 		{
 			// Backward
 			return 4;
 		}
-		else if(rotational_velocity > 0 && speed_change > 0)
+		else if(desired_spin > kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
 		{
 			// Left forward
+			desired_spin = 0;
 			return 5;
 		}
-		else if(rotational_velocity > 0 && speed_change < 0)
+		else if(desired_spin > kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
 		{
 			// Left backward
+			desired_spin = 0;
 			return 6;
 		}
-		else if(rotational_velocity < 0 && speed_change > 0)
+		else if(desired_spin < -kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
 		{
 			// Right forward
+			desired_spin = 0;
 			return 7;
 		}
-		else if(rotational_velocity < 0 && speed_change < 0)
+		else if(desired_spin < -kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
 		{
 			// Right backward
+			desired_spin = 0;
 			return 8;
 		} 
 		else
