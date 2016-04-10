@@ -68,7 +68,7 @@ class Agent
 	int purge_every_;
 
 	public:
-	Agent(int replay_memory, int minibatch_size,
+	Agent(int replay_size, int minibatch_size,
 		int num_output, std::string solver_path, std::string model_path,
 		bool should_train, int train_iter,
 		bool should_train_async,
@@ -79,7 +79,7 @@ class Agent
 	{
 		transitions_ = new TransitionQueue();
 		minibatch_size_ = minibatch_size;
-		replay_size_ = replay_memory;
+		replay_size_ = replay_size;
 		num_output_ = num_output;
 		should_train_ = should_train; // TODO: Change to should_train
 		should_train_async_ = should_train_async;
@@ -382,7 +382,7 @@ class Agent
 				// Normalize speed in the loss function as its raw value is
 				// an order of magnitude larger than spin and speed change and 
 				// we want them to all contributing equally to the loss.
-				double speed = kSpeedCoefficient * transition.speed  - 0.5;
+				double speed = kSpeedCoefficient * transition.speed;
 
 				double direction;
 				if(transition.spin <= -0.01)

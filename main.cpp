@@ -434,7 +434,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	cv::Mat* blank = get_screen(); // First screen is always black.
 
 	bool should_show_image = false;
-	bool should_skip_agent = false;
+	bool should_skip_agent = true;
 
 	Agent* agent = nullptr;
 
