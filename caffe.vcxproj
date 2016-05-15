@@ -350,7 +350,7 @@
   <ItemGroup>
     <ClInclude Include="deep_drive\Agent.h" />
     <ClInclude Include="deep_drive\deep_drive.h" />
-    <ClInclude Include="dqn\TransitionQueue.h" />
+    <ClInclude Include="deep_drive\TransitionQueue.h" />
     <ClInclude Include="helper_cuda.h" />
     <ClInclude Include="helper_string.h" />
     <ClInclude Include="include\caffe\blob.hpp" />

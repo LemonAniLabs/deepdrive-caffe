@@ -17,6 +17,8 @@ struct Transition
 	double spin;
 	double speed; // Norm of 3D speed
 	double speed_change;
+	double steer;
+	double throttle;
 };
 
 class TransitionQueue
@@ -25,6 +27,8 @@ class TransitionQueue
 	std::deque<double>   spins_;
 	std::deque<double>   speeds_;
 	std::deque<double>   speed_changes_;
+	std::deque<double>   steers_;
+	std::deque<double>   throttles_;
 
 	public:
 	TransitionQueue()
@@ -35,12 +39,14 @@ class TransitionQueue
 
 	~TransitionQueue() {}
 
-	void add(cv::Mat* m, double spin, double speed, double speed_change) 
+	void add(cv::Mat* m, double spin, double speed, double speed_change, double steer, double throttle) 
 	{
 		images_.push_back(m);
 		spins_.push_back(spin);
 		speeds_.push_back(speed);
 		speed_changes_.push_back(speed_change);
+		steers_.push_back(steer);
+		throttles_.push_back(throttle);
 	}
 
 	int size() const
@@ -54,6 +60,8 @@ class TransitionQueue
 		spins_.pop_front();
 		speeds_.pop_front();
 		speed_changes_.pop_front();
+		steers_.pop_front();
+		throttles_.pop_front();
 	}
 
 	template <typename Dtype>
@@ -93,6 +101,8 @@ class TransitionQueue
 		ret.spin         = spins_        [start];
 		ret.speed        = speeds_       [start];
 		ret.speed_change = speed_changes_[start];
+		ret.steer        = steers_       [start];
+		ret.throttle     = throttles_    [start];
 
 		return ret;
 	}

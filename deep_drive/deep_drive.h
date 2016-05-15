@@ -26,11 +26,11 @@ namespace deep_drive{
 		return buf;
 	}
 
-	std::string kSaveInputFolderName = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
-	bool createdSavedInputFolder = false;
+	std::string save_input_folder_name;
+	bool should_create_saved_input_folder = true;
 
 	const double kSpeedCoefficient = 0.05;
-	const double kAccumulatedSpinThreshold = 0.2;
+	const double kAccumulatedSpinThreshold = 0.875;
 	const double kSpeedThreshold = 2;
 
 
@@ -46,8 +46,13 @@ namespace deep_drive{
 		double desired_speed;
 		double desired_speed_change;
 		double desired_direction;
+		double actual_spin;
+		double actual_speed;
+		double actual_speed_change;
 		bool heading_achieved;
 		bool speed_achieved;
+		float steer;
+		float throttle;
 	};
 
 	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
@@ -115,6 +120,8 @@ namespace deep_drive{
 		double speed; // Norm of 3D speed
 		double speed_change;
 		double direction;
+		float  steer;
+		float  throttle;
 	};
 
 	inline void wait_to_reset_game_mod_options(SharedRewardData* shared_reward_memory)
@@ -144,38 +151,62 @@ namespace deep_drive{
 		cv::imwrite(folder_name + "img_" + std::to_string(step) + ".bmp", img);
 	}
 
-	inline void saveMeta(SharedRewardData* shared_reward_data, int step_in, std::string folder_name)
+	inline void saveMeta(SharedRewardData* shared_reward_data, SharedAgentControlData* shared_agent_data,
+		int step_in, std::string folder_name)
 	{
 		int step = step_in + kSaveDataStep; // 63361; // 88986
 		std::ofstream myfile;
 		myfile.open (folder_name + "dat_" + std::to_string(step) + ".txt");
 		myfile << "step: " <<  std::to_string(step) << 
-			", spin: " << std::to_string(shared_reward_data->spin) <<
-			", speed: " << std::to_string(shared_reward_data->speed);
+			", spin: "     << std::to_string(shared_reward_data->spin)  <<
+			", speed: "    << std::to_string(shared_reward_data->speed) <<
+			", steer: "    << std::to_string(shared_agent_data->steer)  << 
+			", throttle: " << std::to_string(shared_agent_data->throttle);
 		myfile.close();
 	}
 
-	inline void saveInput(SharedRewardData* shared_reward_data, int step, bool should_save_data, 
+	inline void saveInput(SharedRewardData* shared_reward_data, SharedAgentControlData* shared_agent_data,
+		int step, bool should_save_data, 
 		int save_input_every, cv::Mat* screen)
 	{
 		if(should_save_data)
 		{
-			if( ! createdSavedInputFolder)
+			if(should_create_saved_input_folder)
 			{
-				_mkdir(kSaveInputFolderName.data());
-				createdSavedInputFolder = true;
+				 save_input_folder_name = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
+				_mkdir(save_input_folder_name.data());
+				should_create_saved_input_folder = false;
 			}
 
 			if(step % save_input_every == 0)
 			{
-				saveImage(*screen, step, kSaveInputFolderName);
+				saveImage(*screen, step, save_input_folder_name);
 			}
 
 			if(step % save_input_every == 0)
 			{
-				saveMeta(shared_reward_data, step, kSaveInputFolderName);
+				saveMeta(shared_reward_data, shared_agent_data, step, save_input_folder_name);
 			}				
 		}
+	}
+
+	inline void wait_to_toggle_pause_game(SharedAgentControlData* shared_agent_control)
+	{
+		(*shared_agent_control).should_toggle_pause_game = true;
+		do
+		{
+			output("Waiting to pause game...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_agent_control).should_toggle_pause_game == true);
+	}
+
+	inline void wait_to_reload_game(SharedAgentControlData* shared_agent_control)
+	{
+		do
+		{
+			output("Waiting to reload game...");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		} while ((*shared_agent_control).should_reload_game == true);
 	}
 }
 

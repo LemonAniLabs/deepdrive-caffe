@@ -66,6 +66,7 @@ class Agent
 	SharedRewardData* shared_reward_;
 	double replay_chance_;
 	int purge_every_;
+	bool should_skip_update_;
 
 	public:
 	Agent(int replay_size, int minibatch_size,
@@ -75,7 +76,7 @@ class Agent
 //		int clone_iter, 
 		SharedAgentControlData* shared_agent_control,
 		SharedRewardData* shared_reward, std::string resume_solver_path, bool debug_info,
-		double replay_chance, int purge_every)
+		double replay_chance, int purge_every, bool should_skip_update)
 	{
 		transitions_ = new TransitionQueue();
 		minibatch_size_ = minibatch_size;
@@ -90,6 +91,7 @@ class Agent
 		debug_info_ = debug_info;
 		replay_chance_ = replay_chance;
 		purge_every_ = purge_every;
+		should_skip_update_ = should_skip_update;
 
 		for(auto i = 0; i < num_output; i++)
 		{
@@ -316,11 +318,11 @@ class Agent
 		}
 	}
 
-	bool ready_to_learn()
+	bool ready_to_learn(int replay_size)
 	{
 		return (
 			(! should_train_async_ || get_queue_lock()) && 
-			(transitions_->size() >= replay_size_)
+			(transitions_->size() >= replay_size)
 		);
 	}
 
@@ -333,26 +335,25 @@ class Agent
 		}
 	}
 
-	void wait_to_toggle_pause_game()
+	void normalize_targets(double spin, double& speed, double& direction)
 	{
-		(*shared_agent_control_).should_toggle_pause_game = true;
-		do
+		speed = kSpeedCoefficient * speed - 0.5;
+
+		if(spin <= -0.01)
 		{
-			output("Waiting to pause game...");
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		} while ((*shared_agent_control_).should_toggle_pause_game == true);
+			direction = -1;
+		}
+		else if(spin >= 0.01)
+		{
+			direction = 1;
+		}
+		else
+		{
+			direction = 0;
+		}
 	}
 
-	void wait_to_reload_game()
-	{
-		do
-		{
-			output("Waiting to reload game...");
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		} while ((*shared_agent_control_).should_reload_game == true);
-	}
-
-	void CompleteLearning()
+	void Learn()
 	{
 		int train_count = 0;
 		purge_old_transitions(replay_size_);
@@ -379,29 +380,19 @@ class Agent
 				Transition transition = transistion_sample[i];
 				int j = i * num_output_;
 
+				double speed = transition.speed;
+				double spin = transition.spin;
+
 				// Normalize speed in the loss function as its raw value is
 				// an order of magnitude larger than spin and speed change and 
 				// we want them to all contributing equally to the loss.
-				double speed = kSpeedCoefficient * transition.speed;
-
 				double direction;
-				if(transition.spin <= -0.01)
-				{
-					direction = -1;
-				}
-				else if(transition.spin >= 0.01)
-				{
-					direction = 1;
-				}
-				else
-				{
-					direction = 0;
-				}
+				normalize_targets(spin, speed, direction);
 
-				targets[j + 0] = transition.spin;
-				targets[j + 1] = speed;
-				targets[j + 2] = transition.speed_change;
-				targets[j + 3] = direction;
+				targets[j + 0] = spin;
+//				targets[j + 1] = speed;
+//				targets[j + 2] = transition.speed_change;
+//				targets[j + 3] = direction;
 			}
 
 			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
@@ -425,24 +416,24 @@ class Agent
 		}
 	}
 
-	void Learn()
+	void LearnIfExperienced()
 	{
 		// Perform a minibatch Q-learning update:
 		// w += alpha * (r + gamma max Q(s2,a2) - Q(s,a)) * dQ(s,a)/dw
 //		(*shared_agent_control_).should_reload_game = true; // Reload while training.
 		bool learned = false;
-		if(ready_to_learn())
+		if(transitions_->size() >= replay_size_)
 		{
 			wait_to_reset_game_mod_options(shared_reward_); // Getting stuck on pause waiting for this, not sure why but make sure reset happens before pause.
-			wait_to_toggle_pause_game();
-			CompleteLearning();
+			wait_to_toggle_pause_game(shared_agent_control_);
+			Learn();
 			learned = true;
 		}
 		purge_old_transitions(replay_size_ - train_iter_);
 //		reset_agent();
 		if(learned)
 		{
-			wait_to_toggle_pause_game();
+			wait_to_toggle_pause_game(shared_agent_control_);
 		}
 	}
 
@@ -478,8 +469,7 @@ class Agent
 		return action;
 	}
 
-	Action Perceive(cv::Mat* raw_state, double current_spin, double current_speed, 
-		double current_speed_heading)
+	void AddToReplayMemory(double spin, double speed, double speed_change, double steer, double throttle)
 	{
 		if(last_state_ != nullptr && should_train_)
 		{
@@ -489,34 +479,48 @@ class Agent
 			}
 			if(get_random_double(0.0, 1.0) <= replay_chance_)
 			{
-				transitions_->add(last_state_, current_spin, current_speed, 
-					current_speed_heading);
-//				saveInput(shared_reward_, iter_, true, 1, raw_state);
+				transitions_->add(last_state_, spin, speed, 
+				                  speed_change, steer, throttle);
+				//				saveInput(shared_reward_, iter_, true, 1, raw_state);
 			}
 		}
+	}
 
-		// TODO: Compute some validation statistics to judge performance
-
-		// set the patch for testing
+	Action Forward(cv::Mat* raw_state, double spin, double speed, double speed_change)
+	{
+		Action next_action;
 		std::vector<cv::Mat> frames;
 		frames.push_back(*raw_state);
 		std::vector<int> labels(frames.size());
 		frames_input_layer_->AddMatVector(frames, labels);
 	
-		std::vector<float> target_input(num_output_);
-		std::fill(target_input.begin(), target_input.end(), 0.0f);
-		std::vector<float> output;
-	//	set_action_vector(action, actions);
+		// Targets are inneffectual here, just setting them to check against actuals.
+		double direction;
+		normalize_targets(spin, speed, direction);
+		std::vector<float> targets;
+		
+		for(int i = 0; i < num_output_; i++)
+		{
+			targets.push_back(spin);
+		}
+
+//		targets.push_back(speed);
+//		targets.push_back(speed_change);
+//		targets.push_back(direction);
+//		std::fill(target_input.begin(), target_input.end(), 0.0f);
+		//	set_action_vector(action, actions);
 		std::vector<float> labels2(num_output_);
 		std::fill(labels2.begin(), labels2.end(), 0.0f);
-		target_input_layer_->Reset(&target_input[0], &labels2[0], minibatch_size_);
-		Action next_action;
+		target_input_layer_->Reset(&targets[0], &labels2[0], minibatch_size_);
 		try
 		{
 			// Net forward
 			net_->ForwardPrefilled(nullptr);
 			const float * out_array = net_->blob_by_name("gtanet_fctop")->cpu_data(); // TODO store blob object and reuse pointer
-	//		const float* out_array = results[0]->cpu_data();
+			auto check_fctop = array_to_vec(out_array, num_output_);
+//			log_targets_actuals(targets, check_fctop);
+
+			//		const float* out_array = results[0]->cpu_data();
 			// Store results in prev_results
 			last_action_values_.erase(last_action_values_.begin(), last_action_values_.end());
 			for(int i = 0; i < num_output_; i++)
@@ -527,10 +531,10 @@ class Agent
 					LOG(INFO) << "action values " << i << " = " << out_array[i];
 				}
 			}
-			next_action.spin         = last_action_values_[0];
-			next_action.speed        = last_action_values_[1];
-			next_action.speed_change = last_action_values_[2];
-			next_action.direction    = last_action_values_[3];
+			next_action.spin         = last_action_values_[0]; // Use look ahead value
+			next_action.speed        = last_action_values_[1]; // Use look ahead value
+//			next_action.speed_change = last_action_values_[2];
+//			next_action.direction    = last_action_values_[3];
 		}
 		catch(...)
 		{
@@ -539,7 +543,11 @@ class Agent
 			// TODO: If this gets ported off windows, may need to do this for handling memory exceptions: http://stackoverflow.com/a/918891/134077
 			next_action = last_action_;
 		}
+		return next_action;
+	}
 
+	void PossiblyLearn(Action& next_action)
+	{
 		if(should_train_ && iter_ % train_iter_ == (train_iter_ - 1))
 		{
 			// Next iteration will be training, go to sleep by setting action to no-op
@@ -548,49 +556,57 @@ class Agent
 			next_action.speed_change = 0;
 		}
 
+		if(should_skip_update_)
+		{
+			// Temporary hack to test training net
+			return;
+		}
+
 		if(should_train_ && iter_ % train_iter_ == 0 && iter_ != 0)
 		{
 			if(should_train_async_)
 			{
 				// Need to inline this method after class declaration to have access to train_minibatch_thread
-//				std::thread(train_minibatch_thread, this).detach();	
+				//				std::thread(train_minibatch_thread, this).detach();	
 			}
 			else
 			{
 				try
 				{
-					Learn();
+					LearnIfExperienced();
 				}
 				catch(const std::exception &exc)
 				{
 					LOG(INFO) << exc.what();
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					Learn();
+					LearnIfExperienced();
 				}
 				catch(...)
 				{
 					LOG(INFO) << "error training, trying again";
 					std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					Learn();
+					LearnIfExperienced();
 				}
 			}
 		}
+	}
+
+	Action Perceive(cv::Mat* raw_state, double spin, double speed, 
+		double speed_change, float steer, float throttle)
+	{
+		AddToReplayMemory(spin, speed, speed_change, steer, throttle);
+		Action next_action = Forward(raw_state, spin, speed, speed_change);
+		PossiblyLearn(next_action);
 
 		if(iter_  % 100 == 0)
 		{
 			LOG(INFO) << "iteration: " << iter_;
 		}
-
-
-		//deleteme//std::thread t1(train_minibatch_thread, this);
-		//deleteme//t1.join();
-
-		// TODO: Return the action selected
 	
 		last_state_ = raw_state;
 		last_action_ = next_action;
 
-		if(!should_train_)
+		if( ! should_train_)
 		{
 			// Image history gets deleted in Learn() during training
 			(*raw_state).release();
@@ -602,9 +618,9 @@ class Agent
 		return next_action;
 	}
 
-	int infer_action(double& desired_spin, double desired_speed_change, double desired_speed, double current_speed)
+	int infer_action(double& accumulated_spin, double desired_speed, double current_speed)
 	{
-		bool spin_is_small = (desired_spin <= kAccumulatedSpinThreshold) && (desired_spin >= -kAccumulatedSpinThreshold);
+		bool spin_is_small = (accumulated_spin <= kAccumulatedSpinThreshold) && (accumulated_spin >= -kAccumulatedSpinThreshold);
 		float speed_diff = desired_speed - current_speed;
 		float speed_span = abs(speed_diff);
 		
@@ -613,16 +629,16 @@ class Agent
 			// None
 			return 0;
 		}
-		else if(desired_spin > kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
+		else if(accumulated_spin > kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
 		{
 			// Left
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 1;
 		}
-		else if(desired_spin < -kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
+		else if(accumulated_spin < -kAccumulatedSpinThreshold && speed_span <= kSpeedThreshold)
 		{
 			// Right
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 2;
 		}
 		else if(spin_is_small && speed_diff > kSpeedThreshold)
@@ -635,28 +651,28 @@ class Agent
 			// Backward
 			return 4;
 		}
-		else if(desired_spin > kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
+		else if(accumulated_spin > kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
 		{
 			// Left forward
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 5;
 		}
-		else if(desired_spin > kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
+		else if(accumulated_spin > kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
 		{
 			// Left backward
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 6;
 		}
-		else if(desired_spin < -kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
+		else if(accumulated_spin < -kAccumulatedSpinThreshold && speed_diff > kSpeedThreshold)
 		{
 			// Right forward
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 7;
 		}
-		else if(desired_spin < -kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
+		else if(accumulated_spin < -kAccumulatedSpinThreshold && speed_diff < kSpeedThreshold)
 		{
 			// Right backward
-			desired_spin = 0;
+			accumulated_spin = 0;
 			return 8;
 		} 
 		else
@@ -669,7 +685,7 @@ class Agent
 // The function we want to execute on the new thread.
 inline void train_minibatch_thread(Agent* self)
 {
-	self->Learn();
+	self->LearnIfExperienced();
 }
 
 //inline void train_minibatch_thread(NeuralQLearner* neural_q_learner)

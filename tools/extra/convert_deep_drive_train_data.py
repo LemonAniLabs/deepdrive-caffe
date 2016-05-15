@@ -4,7 +4,7 @@ import shutil
 
 SPEED_COEFFICIENT = 0.05  # This is also in deep_drive.h
 SPIN_THRESHOLD = 0.01  # This is also in Agent.h
-INPUT_DIR  = 'D:\\data\\gtav\\keep\\'
+INPUT_DIR  = 'D:\\data\\gtav\\4hz_spin_speed_001\\'
 OUTPUT_DIR = 'D:\\data\\gtav\\4hz_spin_speed_001_clean\\'
 IMAGE_OUTPUT_DIR = os.path.join(OUTPUT_DIR, 'images')
 LABEL_OUTPUT_FILENAME = os.path.join(OUTPUT_DIR, 'labels.txt')
@@ -13,8 +13,8 @@ LABEL_OUTPUT_FILENAME = os.path.join(OUTPUT_DIR, 'labels.txt')
 def go():
     directory = INPUT_DIR
     dirs = sorted(os.listdir(directory))
-    dirs.remove('img')
-    dirs.remove('dat')
+    # dirs.remove('img')
+    # dirs.remove('dat')
     if os.path.exists(LABEL_OUTPUT_FILENAME):
         os.remove(LABEL_OUTPUT_FILENAME)
     if os.path.exists(IMAGE_OUTPUT_DIR):
@@ -23,8 +23,8 @@ def go():
     index = 0
     for d in dirs:
         dir_path = os.path.join(directory, d)
-        index = add_to_label_file(dir_path, dir_path, index)
-    add_to_label_file(os.path.join(directory, 'dat'), os.path.join(directory, 'img'), index)
+        index = process_dir(dir_path, dir_path, index)
+    # add_to_label_file(os.path.join(directory, 'dat'), os.path.join(directory, 'img'), index)
 
 
 def copy_image(path, new_image_name):
@@ -36,12 +36,19 @@ def file_sort(filename):
     return step
 
 
-def add_to_label_file(dat_dir, img_dir, index):
+def process_dir(dat_dir, img_dir, index):
     files = os.listdir(dat_dir)
+    if len(files) < 100:
+        print('Skipping partial folder')
+        return index
     files = [f for f in files if f.startswith('dat')]
-    files = files[1:]  # Skip the first, usually black image
     files = sorted(files, key=file_sort)
-    last_speed = 0.0   # Start at average (10kph) - first speed_change will be wrong
+    files = files[1:]  # Skip the first, corresponds to black image or loading screen
+
+    # Start at average (0 = 10kph) - first speed_change will be wrong
+    # `speed = kSpeedCoefficient * speed - 0.5;` in main.cpp
+    last_speed = 0.0
+
     with open(LABEL_OUTPUT_FILENAME, 'a') as out_file:
         for j, f in enumerate(files):
             file_path = os.path.join(dat_dir, f)
@@ -66,6 +73,7 @@ def add_to_label_file(dat_dir, img_dir, index):
                     speed_change = speed - last_speed
                     last_speed = speed
                     index += 1
+                    # out_file.write('%s %f\n' % (image_name, spin))
                     out_file.write('%s %f %f %f %f\n' % (image_name, speed, speed_change, spin, direction))
 
     return index

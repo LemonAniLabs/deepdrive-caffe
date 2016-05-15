@@ -302,25 +302,31 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 	SharedRewardData* shared_reward)
 {
 	// Agent settings
-	auto replay_memory                     = 7000;  // Frames are 152k each. So this adds up fast.
-	auto replay_chance                     = 0.01;  // Try to approximate 1M contiguous frames as in DQN with undersampling
+	auto replay_memory                     = 75;    // Frames are 152k each, so this adds up
+	auto replay_chance                     = 1.0;   // 0.01;  // Diversify training data with undersampling and try to approximate 1M contiguous frames as in DQN 
 	auto purge_every                       = 4;     // How often to trim replay memory to max size
-	auto minibatch_size                    = 128;   // Needs to be fast enough to act between batches.
-	auto num_output                        = 4;     // Also specified in model proto in target and fctop layers
+	auto minibatch_size                    = 128;   // Dynamically set batch size for "sleep" phase, deep_drive_model.prototxt has value of 1 set for perception
+	auto num_output                        = 8;     // Also in model proto in target and fctop layers, and filled in Agent::Forward and Agent::ActuallyLearn
 	auto train_iter                        = 75;    // Train every x iterations - callabrated with reload game time, but no longer necessary
-	auto should_train                      = true; 
-	auto should_train_async                = false;
+	auto should_train                      = false;
+	auto should_skip_update                = true;  // Temporary hack to use train net for testing
+	auto should_train_async                = false; // Original attempt to train and pereceive in parallel, not implemented.
 	auto debug_info                        = false; // Also in solver for debug info on the backward pass
 
-	auto should_resume_deep_drive          = true;
-	auto resume_solver_path                = "caffe_deep_drive_train_iter_25000.solverstate";
+	auto should_resume_deep_drive          = false;
+	auto resume_solver_path                = "caffe_deep_drive_train_iter_325000.solverstate";
 	
 	auto should_load_imagenet_pretrained   = false;
 	auto weight_path_image_net             = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
 
-	auto should_load_deep_drive_pretrained = false;
-	auto weight_path_deep_drive            = "caffe_deep_drive_train_iter_25000.caffemodel";
+	auto should_load_deep_drive_pretrained = true;
+	auto weight_path_deep_drive            = "caffe_deep_drive_train_iter_142000.caffemodel";
 	
+	if(should_resume_deep_drive + should_load_imagenet_pretrained + should_load_deep_drive_pretrained != 1)
+	{
+		LOG(INFO) << "Pretrain flags are mutually exclusive";
+		throw std::invalid_argument( "Pretrain flags are mutually exclusive" );
+	}
 
 	if( ! should_resume_deep_drive)
 	{
@@ -333,12 +339,8 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 		should_train, train_iter,
 		should_train_async, 
 		shared_agent_control, shared_reward, resume_solver_path, debug_info,
-		replay_chance, purge_every);
+		replay_chance, purge_every, should_skip_update);
 	
-	(*shared_agent_control).should_reload_game = true;
-	agent->wait_to_reload_game();
-	agent->wait_to_toggle_pause_game();
-
 	// Fine tune
 	if(should_load_deep_drive_pretrained)
 	{
@@ -348,7 +350,6 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 	{
 		load_pretrained_net(agent, weight_path_image_net);
 	}
-	agent->wait_to_toggle_pause_game();
 }
 
 SharedAgentControlData* wait_for_auto_it_sharing()
@@ -374,6 +375,25 @@ SharedRewardData* wait_for_shared_reward_data()
 	return shared_reward_data;
 }
 
+bool time_left_in_step(std::chrono::system_clock::time_point start_time)
+{
+	typedef std::chrono::milliseconds ms;
+	typedef std::chrono::duration<float> fsec;
+	auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+	auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+	auto extra_wait = kStepDuration - elapsed_ms;
+//	LOG(INFO) << "Time left in step: " << extra_wait.count();
+	if(extra_wait.count() > 5)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
 void enforce_period(std::chrono::system_clock::time_point start_time)
 {
 	typedef std::chrono::milliseconds ms;
@@ -383,6 +403,12 @@ void enforce_period(std::chrono::system_clock::time_point start_time)
 	auto extra_wait = kStepDuration - elapsed_ms;
 	std::this_thread::sleep_for(extra_wait);
 }
+
+double normalize_speed(double speed)
+{
+	return (speed + 0.5) * (1.0 / kSpeedCoefficient);
+}													 
+
 
 // the entry point for any Windows program
 int WINAPI WinMain(HINSTANCE hInstance,
@@ -434,7 +460,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	cv::Mat* blank = get_screen(); // First screen is always black.
 
 	bool should_show_image = false;
-	bool should_skip_agent = true;
+	bool should_skip_agent = false;
 
 	Agent* agent = nullptr;
 
@@ -443,11 +469,14 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		InitAgent(agent, shared_agent_data, shared_reward_data);
 	}
 
+	(*shared_agent_data).should_reload_game = true;
+	wait_to_reload_game(shared_agent_data);
+
 	int action = 0;
 	int current_action = 0;
 	int step = 0;
 	(*shared_agent_data).step = step;
-	bool should_save_data = true;
+	bool should_save_data = false;
 	int save_input_every = 1;
 	double last_speed = 0;
 	bool manual_action = true;
@@ -478,7 +507,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				showImage(*screen);
 			}
 
-			saveInput(shared_reward_data, step, should_save_data, save_input_every, screen);
+			saveInput(shared_reward_data, shared_agent_data, 
+				step, should_save_data, save_input_every, screen);
 		}
 
 		if(step % 100 == 0)
@@ -487,7 +517,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 
 		if(screen == nullptr)
-		{
+		{ 
 			output("Could not get screen, skipping..");
 		}
 		else if(should_skip_agent)
@@ -511,7 +541,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				last_speed = shared_reward_data->speed;
 //				current_action = agent->infer_action(shared_reward_data->rotational_velocity, speed_change);
 				Action next_action = agent->Perceive(screen, shared_reward_data->spin, 
-					shared_reward_data->speed, speed_change);
+					shared_reward_data->speed, speed_change, shared_agent_data->steer, 
+					shared_agent_data->throttle);
 				accumulated_spin += next_action.spin;
 				if(agent->get_should_train())
 				{
@@ -521,20 +552,38 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				}
 				else
 				{
-					if(manual_action)
-					{
-						(*shared_agent_data).heading_achieved = true;
-						(*shared_agent_data).speed_achieved = true;						
-					}
-					(*shared_reward_data).desired_spin = next_action.spin;
-					(*shared_reward_data).desired_speed = (next_action.speed + 0.5) * (1.0 / kSpeedCoefficient); // Also in deep_drive.h!!!!
-					(*shared_reward_data).desired_speed_change = next_action.speed_change;
-					(*shared_reward_data).desired_direction = next_action.direction;
+					(*shared_agent_data).heading_achieved = true;
+					(*shared_agent_data).speed_achieved = true;						
 
-					(*shared_agent_data).action = agent->infer_action(accumulated_spin, next_action.speed_change, shared_reward_data->desired_speed, 
-						shared_reward_data->speed);
+					(*shared_reward_data).desired_spin = next_action.spin;
+					(*shared_agent_data ).desired_spin = next_action.spin;
+					(*shared_reward_data).desired_speed = normalize_speed(next_action.speed); 
+					(*shared_agent_data ).desired_speed = normalize_speed(next_action.speed); 
+					(*shared_reward_data).desired_speed_change = next_action.speed_change;
+					(*shared_agent_data ).desired_speed_change = next_action.speed_change;
+					(*shared_reward_data).desired_direction = next_action.direction;
+					(*shared_agent_data ).desired_direction = next_action.direction;
+
+					double current_speed = normalize_speed(shared_reward_data->speed);
+
+					double test_vjoy_spin_temp = 0.0;
+					(*shared_agent_data).action = agent->infer_action(test_vjoy_spin_temp, 10.0, shared_reward_data->speed);
+
+					while(time_left_in_step(start_time))
+					{
+						(*shared_agent_data ).actual_spin = shared_reward_data->spin;
+						(*shared_agent_data ).actual_speed = shared_reward_data->speed;
+						(*shared_agent_data ).actual_speed_change = shared_reward_data->speed - last_speed;						
+					}
 				}
 			}
+		}
+
+		if (shared_reward_data->distance <= 10)
+		{
+			should_create_saved_input_folder = true;
+			(*shared_agent_data).should_reload_game = true;
+			wait_to_reload_game(shared_agent_data);
 		}
 
 		step++;

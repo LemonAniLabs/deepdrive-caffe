@@ -9,6 +9,23 @@
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
 
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+//#include <opencv2/imgproc.hpp>
+//#include <opencv2/imgcodecs.hpp>
+
+//#define TRY_MNIST
+
+#ifdef TRY_MNIST
+#define SCREEN_WIDTH  28
+#define SCREEN_HEIGHT 28
+#else
+#define SCREEN_WIDTH  227
+#define SCREEN_HEIGHT 227
+#endif
+#include <include/caffe/layers/memory_data_layer.hpp>
+
+
 namespace caffe {
 
 template<typename Dtype>
@@ -191,6 +208,58 @@ void Solver<Dtype>::InitTestNets() {
 }
 
 template <typename Dtype>
+std::vector<Dtype> array_to_vec(const Dtype* out_array, const int size)
+{
+	std::vector<Dtype> output(out_array, out_array + size);
+	return output;
+}
+
+
+void showImage(cv::Mat img)
+{
+	if (! img.data) // Check for invalid input
+	{
+		std::cout << "Could not open or find the image" << std::endl ;
+		return;
+	}
+
+//	img = img.t();
+
+	cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE);// Create a window for display.
+	cv::imshow("Display window", img); // Show our image inside it.
+
+	cv::waitKey(0);
+}
+
+template <typename Dtype>
+void log_targets_actuals(std::vector<Dtype> check_target, std::vector<Dtype> check_fctop, Dtype* check_image)
+{
+	int j = 0;
+	for(int i = 0; i < check_target.size(); i++)
+	{
+		if(i % 4 == 0)
+		{
+			LOG(INFO) << "\n target " << j << "---------------";
+			j++;
+		}
+		LOG(INFO) << "targets[" << i << "]: " << check_target[i];
+		LOG(INFO) << "actuals[" << i << "]: " << check_fctop[i] << "\n";
+
+		LOG(INFO) << "first three pixels";
+		for(int j = 0; j < 9; j++)
+        	{
+            		LOG(INFO) << check_image[j];
+        	}
+		size_t step = SCREEN_WIDTH * 4;  // 4 bytes per pixel
+		cv::Mat* img_pt = new cv::Mat(SCREEN_HEIGHT, SCREEN_WIDTH, CV_8UC4, check_image, step);
+		cv::Mat img = *img_pt;
+		showImage(img);
+
+		check_image += SCREEN_HEIGHT * SCREEN_WIDTH;
+	}
+}
+
+template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
 
   vector<Blob<Dtype>*> bottom_vec;
@@ -253,6 +322,24 @@ void Solver<Dtype>::Step(int iters) {
       callbacks_[i]->on_gradients_ready();
     }
     ApplyUpdate();
+
+////    int check_size = 1;  // Minibatch times num_output
+//    int check_size = 64;  // Minibatch times num_output
+////    int check_size = (MemoryDataLayer)net_->layer_by_name("gta_frames_input_layer").batch_size_;  // Minibatch times num_output
+//
+//    const Dtype* image_array = net_->blob_by_name("gta_frames_input_layer")->cpu_data();
+////    const Dtype* image_array = net_->blob_by_name("data")->cpu_data();
+//    const Dtype* target_array = net_->blob_by_name("target")->cpu_data();
+////    const Dtype* target_array = net_->blob_by_name("label")->cpu_data();
+//    const Dtype* actual_array = net_->blob_by_name("gtanet_fctop")->cpu_data();
+////    const Dtype* actual_array = net_->blob_by_name("ip2")->cpu_data();
+//    std::vector<Dtype> check_image = array_to_vec(image_array, check_size * SCREEN_WIDTH * SCREEN_HEIGHT);
+//    std::vector<Dtype> check_target = array_to_vec(target_array, check_size);
+//    std::vector<Dtype> check_fctop = array_to_vec(actual_array, check_size);
+//
+//    Dtype* image_array_ = (Dtype*)image_array;
+//
+//    log_targets_actuals(check_target, check_fctop, image_array_);
 
     // Increment the internal iter_ counter -- its value should always indicate
     // the number of times the weights have been updated.
