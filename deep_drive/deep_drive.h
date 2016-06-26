@@ -11,6 +11,8 @@
 
 namespace deep_drive{
 	const int kSaveDataStep = 0; // 88986; // 63361; // Using folder now, first dataset has different sessions at these frames though.
+	auto kMsInStep = 125;
+	auto kStepDuration = std::chrono::milliseconds(kMsInStep); // Used to keep training data size down. With GeForce GTX 980, we can get to 50Hz or 20ms.
 
 
 	// Get current date/time, format is YYYY-MM-DD.HH:mm:ss
@@ -29,7 +31,7 @@ namespace deep_drive{
 	std::string save_input_folder_name;
 	bool should_create_saved_input_folder = true;
 
-	const double kSpeedCoefficient = 0.05;
+	const double kSpeedCoefficient = 0.05; // Also in clean_deep_drive_data.py in deep_drive branch
 	const double kAccumulatedSpinThreshold = 0.875;
 	const double kSpeedThreshold = 2;
 
@@ -53,6 +55,8 @@ namespace deep_drive{
 		bool speed_achieved;
 		float steer;
 		float throttle;
+		double desired_steer;
+		double desired_throttle;
 	};
 
 	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
@@ -69,10 +73,14 @@ namespace deep_drive{
 		double desired_speed_change; // for directly setting speed change, intermediate step to real control
 		double desired_direction;
 		double spin;
+		bool should_game_drive;
+		bool should_perform_random_action;
+		bool is_game_driving;
+		int temp_action;
 	};
 
 
-	void output(const char* out_string)
+	inline void output(const char* out_string)
 	{
 		OutputDebugStringA(out_string);
 		LOG(INFO) << out_string;
@@ -85,32 +93,25 @@ namespace deep_drive{
 		return start;
 	}
 
+	std::random_device random_seed;     // only used once to initialise (seed) engine
+	std::mt19937 random_generator(random_seed());    // random-number engine used (Mersenne-Twister in this case)
+
 	template<typename Iter>
 	Iter select_randomly(Iter start, Iter end) {
-		static std::random_device rd;
-		static std::mt19937 gen(rd());
-		return select_randomly(start, end, gen);
+		return select_randomly(start, end, random_generator);
 	}
 
 	inline int get_random_int(int start, int end)
 	{
-		std::random_device rd;     // only used once to initialise (seed) engine
-		std::mt19937 rng(rd());    // random-number engine used (Mersenne-Twister in this case)
 		std::uniform_int_distribution<int> uni(start, end); // guaranteed unbiased
-
-		auto random_integer = uni(rng);
-
+		auto random_integer = uni(random_generator);
 		return random_integer;
 	}
 
 	inline double get_random_double(double start, double end)
 	{
-		std::random_device rd;     // only used once to initialise (seed) engine
-		std::mt19937 rng(rd());    // random-number engine used (Mersenne-Twister in this case)
 		std::uniform_real_distribution<double> uni(start, end); // guaranteed unbiased
-
-		auto random_double = uni(rng);
-
+		auto random_double = uni(random_generator);
 		return random_double;
 	}
 
@@ -139,6 +140,43 @@ namespace deep_drive{
 		wait_to_reset_game_mod_options(shared_reward_memory);
 	}
 
+	inline void print_time_since(std::chrono::system_clock::time_point start_time, std::string name)
+	{
+		typedef std::chrono::milliseconds ms;
+		auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+		auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+		output((name + " duration: " + std::to_string(elapsed_ms.count()) + "\n").c_str());
+	}
+
+	inline bool time_left_in_step(std::chrono::system_clock::time_point start_time)
+	{
+		typedef std::chrono::milliseconds ms;
+		auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+		auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+		auto extra_wait = kStepDuration - elapsed_ms;
+		LOG(INFO) << "Time left in step: " << extra_wait.count();
+		if(extra_wait.count() > 5)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	inline void enforce_period(std::chrono::system_clock::time_point start_time)
+	{
+		// Used to keep training data size down. With GeForce GTX 980, we can get to 50Hz.
+		typedef std::chrono::milliseconds ms;
+		auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+		auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+		auto extra_wait = kStepDuration - elapsed_ms;
+		LOG(INFO) << "elapsed ms " << elapsed_ms.count();
+		std::this_thread::sleep_for(extra_wait);
+	}
+
 	inline void saveImage(cv::Mat img, int iter, std::string folder_name)
 	{
 		int step = iter + kSaveDataStep;
@@ -152,41 +190,47 @@ namespace deep_drive{
 	}
 
 	inline void saveMeta(SharedRewardData* shared_reward_data, SharedAgentControlData* shared_agent_data,
-		int step_in, std::string folder_name)
+		int step_in, std::string folder_name, std::chrono::system_clock::time_point screen_cap_start)
 	{
+
 		int step = step_in + kSaveDataStep; // 63361; // 88986
 		std::ofstream myfile;
 		myfile.open (folder_name + "dat_" + std::to_string(step) + ".txt");
-		myfile << "step: " <<  std::to_string(step) << 
-			", spin: "     << std::to_string(shared_reward_data->spin)  <<
-			", speed: "    << std::to_string(shared_reward_data->speed) <<
-			", steer: "    << std::to_string(shared_agent_data->steer)  << 
-			", throttle: " << std::to_string(shared_agent_data->throttle);
+
+		myfile << "step: " << std::to_string(step)                                                           << 
+			", spin: "         << std::to_string(shared_reward_data->spin)                                    <<
+			", speed: "        << std::to_string(shared_reward_data->speed)                                   <<
+			", steer: "        << std::to_string(shared_agent_data->steer)                                    << 
+			", throttle: "     << std::to_string(shared_agent_data->throttle)                                 << 
+			", img_time: "     << std::to_string(screen_cap_start.time_since_epoch().count())                 <<           // B,Mse,kse,sec,mil,mic,n
+			", metric_time: "  << std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) << // B,Mse,kse,sec,mil,mic,n
+			", random_action: " << std::to_string( ! shared_reward_data->is_game_driving);
 		myfile.close();
 	}
 
 	inline void saveInput(SharedRewardData* shared_reward_data, SharedAgentControlData* shared_agent_data,
 		int step, bool should_save_data, 
-		int save_input_every, cv::Mat* screen)
+		int save_input_every, cv::Mat* screen, std::chrono::system_clock::time_point screen_cap_start)
 	{
 		if(should_save_data)
 		{
 			if(should_create_saved_input_folder)
 			{
-				 save_input_folder_name = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
+				save_input_folder_name = "D:\\data\\gtav\\4hz_spin_speed_001\\" + current_date_time() + "\\";
 				_mkdir(save_input_folder_name.data());
 				should_create_saved_input_folder = false;
 			}
 
 			if(step % save_input_every == 0)
 			{
+				auto save_meta_start = std::chrono::system_clock::now();
+				saveMeta(shared_reward_data, shared_agent_data, step, save_input_folder_name, screen_cap_start);
 				saveImage(*screen, step, save_input_folder_name);
-			}
 
-			if(step % save_input_every == 0)
-			{
-				saveMeta(shared_reward_data, shared_agent_data, step, save_input_folder_name);
-			}				
+				// Writing a file every frame takes about 1ms.
+//				print_time_since(save_meta_start,  "save meta");
+//				print_time_since(screen_cap_start, "screen cap to save meta");
+			}		
 		}
 	}
 
@@ -200,14 +244,53 @@ namespace deep_drive{
 		} while ((*shared_agent_control).should_toggle_pause_game == true);
 	}
 
-	inline void wait_to_reload_game(SharedAgentControlData* shared_agent_control)
+	inline std::chrono::system_clock::time_point wait_to_reload_game(SharedAgentControlData* shared_agent_data, SharedRewardData* shared_reward_data, bool should_save_data)
 	{
 		do
 		{
 			output("Waiting to reload game...");
+			shared_reward_data->should_game_drive = false;
+//			shared_reward_data->temp_action = 1; // Brake
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		} while ((*shared_agent_control).should_reload_game == true);
+		} while ((*shared_agent_data).should_reload_game == true);
+
+
+		if(should_save_data)
+		{
+			shared_reward_data->should_game_drive = true;	
+		}
+		else
+		{
+			shared_reward_data->should_game_drive = false;
+		}
+		auto game_start_time = std::chrono::high_resolution_clock::now();
+		return game_start_time;
 	}
+
+	inline std::chrono::system_clock::time_point reload_game(SharedAgentControlData* shared_agent_data, SharedRewardData* shared_reward_data, bool should_save_data)
+	{
+		(*shared_agent_data).should_reload_game = true;
+		return wait_to_reload_game(shared_agent_data, shared_reward_data, should_save_data);		
+	}
+
+	inline std::chrono::system_clock::time_point reload_game_based_on_duration(std::chrono::minutes game_duration, std::chrono::system_clock::time_point game_start_time, SharedAgentControlData* shared_agent_data, SharedRewardData* shared_reward_data, bool should_save_data, int &step)
+	{
+		typedef std::chrono::milliseconds ms;
+		auto elapsed = std::chrono::high_resolution_clock::now() - game_start_time;
+		auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+		if(elapsed_ms >= game_duration)
+		{
+			step = 0;
+			should_create_saved_input_folder = true;
+			return reload_game(shared_agent_data, shared_reward_data, should_save_data);
+		}
+		else
+		{
+			step++;
+			return game_start_time;
+		}
+	}
+
 }
 
 #endif  // DEEP_DRIVE_H

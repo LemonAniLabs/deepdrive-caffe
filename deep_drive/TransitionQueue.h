@@ -64,6 +64,25 @@ class TransitionQueue
 		throttles_.pop_front();
 	}
 
+	Transition previous()
+	{
+		Transition ret;
+		if(this->size() == 0)
+		{
+			ret.image = nullptr;
+			return ret;
+		}
+
+		int i = this->size() - 1;
+		ret.image        = images_       [i];
+		ret.spin         = spins_        [i];
+		ret.speed        = speeds_       [i];
+		ret.speed_change = speed_changes_[i];
+		ret.steer        = steers_       [i];
+		ret.throttle     = throttles_    [i];
+		return ret;
+	}
+
 	template <typename Dtype>
 	void release_front(std::deque<Dtype>& c)
 	{
@@ -79,7 +98,6 @@ class TransitionQueue
 //		auto start = 0;
 //		while (!valid)
 //		{
-			// TODO: Use better random here.
 			 // start at 1 because of previous action
 
 			// Terminal states may not matter for us, but orig DQN prompted the following during original port:
@@ -96,8 +114,7 @@ class TransitionQueue
 //		}
 
 		Transition ret;
-		ret.image  = images_[start];
-
+		ret.image        = images_       [start];
 		ret.spin         = spins_        [start];
 		ret.speed        = speeds_       [start];
 		ret.speed_change = speed_changes_[start];

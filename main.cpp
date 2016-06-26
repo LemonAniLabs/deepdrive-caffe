@@ -31,7 +31,6 @@
 #include <codecvt>
 #include <locale>
 
-
 #define DBOUT( s )                           \
 {                                            \
    std::wostringstream os_;                  \
@@ -132,8 +131,6 @@ void showImage(cv::Mat img);
 
 double previousDistance = std::numeric_limits<double>::min();
 double previouslyTraveled = std::numeric_limits<double>::min();
-
-auto kStepDuration = std::chrono::milliseconds(250);
 
 // the WindowProc function prototype
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -305,22 +302,23 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 	auto replay_memory                     = 75;    // Frames are 152k each, so this adds up
 	auto replay_chance                     = 1.0;   // 0.01;  // Diversify training data with undersampling and try to approximate 1M contiguous frames as in DQN 
 	auto purge_every                       = 4;     // How often to trim replay memory to max size
-	auto minibatch_size                    = 128;   // Dynamically set batch size for "sleep" phase, deep_drive_model.prototxt has value of 1 set for perception
-	auto num_output                        = 8;     // Also in model proto in target and fctop layers, and filled in Agent::Forward and Agent::ActuallyLearn
+	auto learn_minibatch_size              = 64;    // Dynamically set batch size for "sleep" phase of 'online' training, deep_drive_model.prototxt has value of 1 set for perception
+	auto num_output                        = 6;     // Also in model proto in target and fctop layers, and filled in Agent::Forward and Agent::ActuallyLearn
 	auto train_iter                        = 75;    // Train every x iterations - callabrated with reload game time, but no longer necessary
 	auto should_train                      = false;
-	auto should_skip_update                = true;  // Temporary hack to use train net for testing
-	auto should_train_async                = false; // Original attempt to train and pereceive in parallel, not implemented.
+	auto should_skip_update                = true;  // Hack to use train net for testing / logging outputs
+	auto should_train_async                = false; // Original attempt to train and pereceive in parallel, not fully implemented yet.
 	auto debug_info                        = false; // Also in solver for debug info on the backward pass
+	auto should_fill_replay_memory         = true;
 
 	auto should_resume_deep_drive          = false;
-	auto resume_solver_path                = "caffe_deep_drive_train_iter_325000.solverstate";
+	auto resume_solver_path                = "caffe_deep_drive_train_iter_166000.solverstate";
 	
 	auto should_load_imagenet_pretrained   = false;
 	auto weight_path_image_net             = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
 
 	auto should_load_deep_drive_pretrained = true;
-	auto weight_path_deep_drive            = "caffe_deep_drive_train_iter_142000.caffemodel";
+	auto weight_path_deep_drive            = "caffe_deep_drive_train_iter_206798.caffemodel";
 	
 	if(should_resume_deep_drive + should_load_imagenet_pretrained + should_load_deep_drive_pretrained != 1)
 	{
@@ -333,13 +331,13 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 		resume_solver_path = "";
 	}
 
-	agent = new deep_drive::Agent(replay_memory, minibatch_size, num_output,
+	agent = new deep_drive::Agent(replay_memory, learn_minibatch_size, num_output,
 		"examples/deep_drive/deep_drive_solver.prototxt", 
 		"examples/deep_drive/deep_drive_model.prototxt",
 		should_train, train_iter,
 		should_train_async, 
 		shared_agent_control, shared_reward, resume_solver_path, debug_info,
-		replay_chance, purge_every, should_skip_update);
+		replay_chance, purge_every, should_skip_update, should_fill_replay_memory);
 	
 	// Fine tune
 	if(should_load_deep_drive_pretrained)
@@ -375,40 +373,10 @@ SharedRewardData* wait_for_shared_reward_data()
 	return shared_reward_data;
 }
 
-bool time_left_in_step(std::chrono::system_clock::time_point start_time)
+double denormalize_speed(double speed)
 {
-	typedef std::chrono::milliseconds ms;
-	typedef std::chrono::duration<float> fsec;
-	auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-	auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
-	auto extra_wait = kStepDuration - elapsed_ms;
-//	LOG(INFO) << "Time left in step: " << extra_wait.count();
-	if(extra_wait.count() > 5)
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		return true;
-	}
-	else
-	{
-		return false;
-	}
+	return speed / kSpeedCoefficient;
 }
-
-void enforce_period(std::chrono::system_clock::time_point start_time)
-{
-	typedef std::chrono::milliseconds ms;
-	typedef std::chrono::duration<float> fsec;
-	auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-	auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
-	auto extra_wait = kStepDuration - elapsed_ms;
-	std::this_thread::sleep_for(extra_wait);
-}
-
-double normalize_speed(double speed)
-{
-	return (speed + 0.5) * (1.0 / kSpeedCoefficient);
-}													 
-
 
 // the entry point for any Windows program
 int WINAPI WinMain(HINSTANCE hInstance,
@@ -469,18 +437,30 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		InitAgent(agent, shared_agent_data, shared_reward_data);
 	}
 
-	(*shared_agent_data).should_reload_game = true;
-	wait_to_reload_game(shared_agent_data);
-
-	int action = 0;
-	int current_action = 0;
+//	int action = 0;
+//	int current_action = 0;
+	// TODO: Put these in config file
 	int step = 0;
 	(*shared_agent_data).step = step;
-	bool should_save_data = false;
+	bool should_save_data = true;
 	int save_input_every = 1;
+	bool should_reload_based_on_distance = false;
+	bool should_reload_based_on_duration = true;
+	bool should_deep_drive_only = false;
+	bool should_toggle_game_and_deep_drive = false;
+	shared_reward_data->should_perform_random_action = true; // Otherwise, we just mildly accelerate and disengage
+	auto kMsToExploitOrExplore = 1000;
+	auto kStepsToExploitOrExplore = kMsToExploitOrExplore / kMsInStep;
+	auto kStepsInExploitExploreCycle = 2 * kStepsToExploitOrExplore;
+
+	auto reload_game_after = std::chrono::minutes(20);
+
 	double last_speed = 0;
-	bool manual_action = true;
+//	bool manual_action = true;
 	double accumulated_spin = 0;
+
+	std::chrono::system_clock::time_point game_start_time = 
+		reload_game(shared_agent_data, shared_reward_data, should_save_data);
 
 	// Main loop
 	MSG msg;
@@ -498,17 +478,17 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
  		RenderFrame();
 
-		// DeepDrive stuff
+		auto screen_cap_start = std::chrono::high_resolution_clock::now();
 		cv::Mat* screen = get_screen();
+//		print_time_since(screen_cap_start, "screen cap");
+		auto screen_cap_end   = std::chrono::high_resolution_clock::now();
+
 		if(screen)
 		{
 			if(should_show_image)
 			{
 				showImage(*screen);
 			}
-
-			saveInput(shared_reward_data, shared_agent_data, 
-				step, should_save_data, save_input_every, screen);
 		}
 
 		if(step % 100 == 0)
@@ -528,6 +508,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		else if((*shared_agent_data).should_agent_wait)
 		{
 			output("Perception paused, skipping...");
+			if(should_save_data)
+			{
+				shared_reward_data->should_game_drive = true;
+			}
+
 			delete screen;
 		}
 		else
@@ -537,12 +522,28 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				last_speed = shared_reward_data->speed;
 			}
 			else {
+				if(should_deep_drive_only || (should_toggle_game_and_deep_drive && step % kStepsInExploitExploreCycle < kStepsToExploitOrExplore))
+				{
+					shared_reward_data->should_game_drive = false;
+				}
+				else if(shared_reward_data->should_perform_random_action && get_random_double(0, 1) < 0.10)
+				{
+					shared_reward_data->should_game_drive = false;
+					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+				}
+				else
+				{
+
+					shared_reward_data->should_game_drive = true;
+				}
+
 				double speed_change = shared_reward_data->speed - last_speed;
 				last_speed = shared_reward_data->speed;
 //				current_action = agent->infer_action(shared_reward_data->rotational_velocity, speed_change);
 				Action next_action = agent->Perceive(screen, shared_reward_data->spin, 
 					shared_reward_data->speed, speed_change, shared_agent_data->steer, 
 					shared_agent_data->throttle);
+//				print_time_since(screen_cap_start, "screen cap to perceive");
 				accumulated_spin += next_action.spin;
 				if(agent->get_should_train())
 				{
@@ -552,41 +553,85 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				}
 				else
 				{
+
+//					double current_speed = normalize_speed(shared_reward_data->speed);
+
+//					double test_vjoy_spin_temp = 0.0;
+//					(*shared_agent_data).action = agent->infer_action(test_vjoy_spin_temp, 10.0, shared_reward_data->speed);
+
+					if(should_save_data)
+					{
+						saveInput(shared_reward_data, shared_agent_data, 
+							step, should_save_data, save_input_every, screen, screen_cap_start);					
+					}
+
 					(*shared_agent_data).heading_achieved = true;
 					(*shared_agent_data).speed_achieved = true;						
 
-					(*shared_reward_data).desired_spin = next_action.spin;
-					(*shared_agent_data ).desired_spin = next_action.spin;
-					(*shared_reward_data).desired_speed = normalize_speed(next_action.speed); 
-					(*shared_agent_data ).desired_speed = normalize_speed(next_action.speed); 
-					(*shared_reward_data).desired_speed_change = next_action.speed_change;
-					(*shared_agent_data ).desired_speed_change = next_action.speed_change;
-					(*shared_reward_data).desired_direction = next_action.direction;
-					(*shared_agent_data ).desired_direction = next_action.direction;
+					(*shared_reward_data).desired_spin                 = next_action.spin;
+					(*shared_agent_data ).desired_spin                 = next_action.spin;
+					(*shared_reward_data).desired_speed                = denormalize_speed(next_action.speed); 
+					(*shared_agent_data ).desired_speed                = denormalize_speed(next_action.speed); 
+					(*shared_reward_data).desired_speed_change         = next_action.speed_change;
+					(*shared_agent_data ).desired_speed_change         = next_action.speed_change;
+					(*shared_reward_data).desired_direction            = next_action.direction;
+					(*shared_agent_data ).desired_direction            = next_action.direction;
 
-					double current_speed = normalize_speed(shared_reward_data->speed);
+					(*shared_agent_data ).desired_steer                = next_action.steer;
+					(*shared_agent_data ).desired_throttle             = next_action.throttle;						
 
-					double test_vjoy_spin_temp = 0.0;
-					(*shared_agent_data).action = agent->infer_action(test_vjoy_spin_temp, 10.0, shared_reward_data->speed);
 
 					while(time_left_in_step(start_time))
 					{
-						(*shared_agent_data ).actual_spin = shared_reward_data->spin;
-						(*shared_agent_data ).actual_speed = shared_reward_data->speed;
-						(*shared_agent_data ).actual_speed_change = shared_reward_data->speed - last_speed;						
+						// This has no effect on saved data.
+						// It just allows the agent to react to the state of the vehicle throughout the duration
+						// of the step.
+						(*shared_agent_data).actual_spin         = shared_reward_data->spin;
+						(*shared_agent_data).actual_speed        = shared_reward_data->speed;
+						(*shared_agent_data).actual_speed_change = shared_reward_data->speed - last_speed;						
 					}
+
+//					// Perform a random action once in a while
+//					if(should_save_data && get_random_double(0, 1) < 0.50)
+//					{
+//						shared_reward_data->should_wander = false;
+//						shared_reward_data->is_wandering = false;
+//						std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Give time to get off track.
+//						shared_reward_data->should_wander = true;
+////						std::this_thread::sleep_for(std::chrono::milliseconds(230)); // Give time to take back control.
+//					}
+
+					if( ! agent->get_should_save_experiences())
+					{
+						(*screen).release();
+						delete screen;
+					}
+
 				}
 			}
 		}
 
-		if (shared_reward_data->distance <= 10)
+		if (should_reload_based_on_distance)
 		{
-			should_create_saved_input_folder = true;
-			(*shared_agent_data).should_reload_game = true;
-			wait_to_reload_game(shared_agent_data);
+			if( shared_reward_data->distance <= 10)
+			{
+				should_create_saved_input_folder = true;
+				game_start_time = reload_game(shared_agent_data, shared_reward_data, should_save_data);
+				step = 0;				
+			}
+			else
+			{
+				step++;
+			}
+
+		} else if(should_reload_based_on_duration)
+		{
+			game_start_time = reload_game_based_on_duration(reload_game_after, game_start_time, shared_agent_data, shared_reward_data, should_save_data, step);
+		} else
+		{
+			step++;
 		}
 
-		step++;
 		(*shared_agent_data).step = step;
 
 		enforce_period(start_time);
@@ -821,6 +866,7 @@ cv::Mat* get_screen()
 	bool success;
 	bool use_cuda = true;
 
+	auto screen_copy_start = std::chrono::high_resolution_clock::now();
 	if(use_cuda)
 	{
 		success = cudaCopyBackBufferToMemory(backBufferTex, imcopy);
@@ -829,6 +875,7 @@ cv::Mat* get_screen()
 	{
 		success = copyTextureToMemory(backBufferTex, imcopy);
 	}
+//	print_time_since(screen_copy_start, "screen gpu transfer");
 
 	backBufferTex->Release();
 
@@ -838,16 +885,17 @@ cv::Mat* get_screen()
 
 		size_t step = SCREEN_WIDTH * 4;
 		cv::Mat* img_pt = new cv::Mat(SCREEN_HEIGHT, SCREEN_WIDTH, CV_8UC4, imcopy, step);
-		
+//		print_time_since(screen_copy_start, "screen new");
 
 		cv::Mat img = *img_pt;
 //		cv::Mat ret_im = img.clone();
 		cv::Mat* ret_pt = new cv::Mat(SCREEN_HEIGHT, SCREEN_WIDTH, CV_8UC4);
 		img_pt->copyTo(*ret_pt); // Make sure we decouple from imcopy
+//		print_time_since(screen_copy_start, "screen copy");
 
 		//	cv::Mat img = cv::imdecode(, CV_32FC4);
 		cv::cvtColor(*ret_pt, *ret_pt, CV_RGBA2BGR);
-
+//		print_time_since(screen_copy_start, "screen convert");
 		//cv::Mat src = *img;
 		//cv::Mat ret = src.clone(); // Give OpenCV ownership of the memory
 
@@ -856,7 +904,7 @@ cv::Mat* get_screen()
 		//src.release();
 		delete img_pt;
 		delete[] imcopy;
-
+//		print_time_since(screen_copy_start, "screen delete");
 		return ret_pt;
 //		return img;
 	} 
@@ -951,6 +999,9 @@ void Cleanup(void)
 // this is the function that creates the shape to render
 void InitGraphics()
 {
+    // TODO: Delete this. Was from directxtutorial.com boilerplate.
+    //       However, could be useful for 3D visualization of net params.
+
 	// create vertices to represent the corners of the cube
 	VERTEX OurVertices[] =
 		{

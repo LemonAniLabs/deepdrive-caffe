@@ -31,7 +31,8 @@ namespace deep_drive
 class Agent
 {
 	TransitionQueue* transitions_;
-	int minibatch_size_;  // Needs to be fast enough to act between batches.
+	int minibatch_size_ = 1; 
+	int learn_minibatch_size_;  
 	int replay_size_;
 	std::atomic<bool> queue_lock_;
 	caffe::Net<float>* net_;
@@ -40,6 +41,7 @@ class Agent
 	boost::shared_ptr<caffe::Blob<float>> frames_input_blob_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> frames_input_layer_;
 	boost::shared_ptr<caffe::MemoryDataLayer<float>> target_input_layer_;
+//	boost::shared_ptr<caffe::MemoryDataLayer<float>> vehicle_states_input_layer_;
 //	boost::shared_ptr<caffe::MemoryDataLayer<float>> reshape_layer_;
 //	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_frames_input_layer_;
 //	boost::shared_ptr<caffe::MemoryDataLayer<float>> clone_target_input_layer_;
@@ -67,19 +69,20 @@ class Agent
 	double replay_chance_;
 	int purge_every_;
 	bool should_skip_update_;
+	bool should_fill_replay_memory_;
 
 	public:
-	Agent(int replay_size, int minibatch_size,
+	Agent(int replay_size, int learn_minibatch_size,
 		int num_output, std::string solver_path, std::string model_path,
 		bool should_train, int train_iter,
 		bool should_train_async,
 //		int clone_iter, 
 		SharedAgentControlData* shared_agent_control,
 		SharedRewardData* shared_reward, std::string resume_solver_path, bool debug_info,
-		double replay_chance, int purge_every, bool should_skip_update)
+		double replay_chance, int purge_every, bool should_skip_update, bool should_fill_replay_memory)
 	{
 		transitions_ = new TransitionQueue();
-		minibatch_size_ = minibatch_size;
+		learn_minibatch_size_ = learn_minibatch_size;
 		replay_size_ = replay_size;
 		num_output_ = num_output;
 		should_train_ = should_train; // TODO: Change to should_train
@@ -92,6 +95,7 @@ class Agent
 		replay_chance_ = replay_chance;
 		purge_every_ = purge_every;
 		should_skip_update_ = should_skip_update;
+		should_fill_replay_memory_ = should_fill_replay_memory;
 
 		for(auto i = 0; i < num_output; i++)
 		{
@@ -132,6 +136,9 @@ class Agent
 		target_input_layer_ =
 			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
 				net_->layer_by_name("target_input_layer"));
+//		vehicle_states_input_layer_ =
+//			boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
+//				net_->layer_by_name("vehicle_states_input_layer"));
 //		reshape_layer_ =
 //			boost::dynamic_pointer_cast<caffe::ReshapeLayer<float>>(
 //				net_->layer_by_name("reshape"));
@@ -139,6 +146,7 @@ class Agent
 
  		assert(frames_input_layer_);
 		assert(target_input_layer_);
+//		assert(vehicle_states_input_layer_);
 //		assert(reshape_layer_);
 
 		input_layers_.push_back(frames_input_layer_);
@@ -180,6 +188,11 @@ class Agent
 //		clone_input_layers_.push_back(clone_target_input_layer_);
 //		output("Cloned net");
 //	}
+
+	bool get_should_save_experiences()
+	{
+		return should_fill_replay_memory_;
+	}
 
 	void load_weights(std::string weight_file)
 	{
@@ -271,7 +284,7 @@ class Agent
 			frames.push_back(*(transition.image));
 
 			// Frame input size is minibatch * frames_per_sample * sizeof(cv::Mat == w * h)
-			// TODO: Set input channels with four consecutive frames.
+			// TODO: Set input channels with four consecutive frames for time inference or use frame difference for motion.
 		}
 
 		std::vector<int> labels(frames.size());
@@ -280,19 +293,12 @@ class Agent
 		std::fill(labels.begin(), labels.end(), 0);
 		std::fill(labels2.begin(), labels2.end(), 0.0f);
 
-		// TODO: Create new memory layer add mat vector without transform (random crop, scale, mirror)
-		// that way we can take advantage of a fixed perspective and input time based channels.
-		// Do this after you have stepped through with one frame as input and can see the 
-		// dimensions and format that Transform spits out. (Should just be flattened array of batch * channels * w * h)
-		// First see if transform is too slow though, since data augementation could still be useful.
-		// Could just do Reset()...
-
 		const float* out_array;
 
 		std::vector<float> dummy_input;
-		// Get actuals
 		frames_input_layer_->AddMatVector(frames, labels);
 		target_input_layer_->Reset(const_cast<float*>(targets.data()), &labels2[0], minibatch_size_);
+//		vehicle_states_input_layer_->Reset(const_cast<float*>(vehicle_states.data()), &labels2[0], minibatch_size_);
 		solver_->Step(1);
 		auto check_target = array_to_vec(net->blob_by_name("target")->cpu_data(), minibatch_size_ * num_output_);
 		auto check_fctop = array_to_vec(net->blob_by_name("gtanet_fctop")->cpu_data(), minibatch_size_ * num_output_);
@@ -328,6 +334,7 @@ class Agent
 
 	void set_batch_size(int batch_size)
 	{
+		minibatch_size_ = batch_size;
 		for(int i = 0; i < input_layers_.size(); i++)
 		{
 			(input_layers_[i])->set_batch_size(batch_size);
@@ -335,9 +342,9 @@ class Agent
 		}
 	}
 
-	void normalize_targets(double spin, double& speed, double& direction)
+	void normalize_metrics(double spin, double& speed, double& direction)
 	{
-		speed = kSpeedCoefficient * speed - 0.5;
+		speed = kSpeedCoefficient * speed;
 
 		if(spin <= -0.01)
 		{
@@ -367,13 +374,15 @@ class Agent
 
 		while(train_count < train_iter_) // Set while(true) here to overfit on one batch
 		{
-			set_batch_size(minibatch_size_);
+			set_batch_size(learn_minibatch_size_);
 			auto transistion_sample = transitions_->sample(minibatch_size_);
 
-			// Get targets
-			std::vector<float> targets(num_output_ * minibatch_size_);
-			// TODO: Set targets
+			// Get targets / vehicle states
+			std::vector<float> targets       (num_output_ * minibatch_size_);
+
+			// Set targets / vehicle states
 			std::fill(targets.begin(), targets.end(), 0.0f);
+//			std::fill(targets.begin(), vehicle_states.end(), 0.0f);
 
 			for(int i = 0; i < minibatch_size_; i = i++)
 			{
@@ -387,12 +396,17 @@ class Agent
 				// an order of magnitude larger than spin and speed change and 
 				// we want them to all contributing equally to the loss.
 				double direction;
-				normalize_targets(spin, speed, direction);
+				normalize_metrics(spin, speed, direction);
 
-				targets[j + 0] = spin;
-//				targets[j + 1] = speed;
+//				targets[j + 0] = steer;
+//				targets[j + 1] = throttle;
 //				targets[j + 2] = transition.speed_change;
 //				targets[j + 3] = direction;
+
+//				vehicle_states[j + 0] = prev_spin;
+//				vehicle_states[j + 1] = throttle;
+//				vehicle_states[j + 2] = transition.speed_change;
+//				vehicle_states[j + 3] = direction;
 			}
 
 			//		// TODO: Delete after figuring out why loss is zero on Q1 pass
@@ -471,7 +485,7 @@ class Agent
 
 	void AddToReplayMemory(double spin, double speed, double speed_change, double steer, double throttle)
 	{
-		if(last_state_ != nullptr && should_train_)
+		if(last_state_ != nullptr && should_fill_replay_memory_)
 		{
 			if(iter_ != 0 && iter_ % purge_every_ == 0)
 			{
@@ -486,7 +500,7 @@ class Agent
 		}
 	}
 
-	Action Forward(cv::Mat* raw_state, double spin, double speed, double speed_change)
+	Action Forward(cv::Mat* raw_state, double spin, double speed, double speed_change, double steer, double throttle)
 	{
 		Action next_action;
 		std::vector<cv::Mat> frames;
@@ -496,28 +510,68 @@ class Agent
 	
 		// Targets are inneffectual here, just setting them to check against actuals.
 		double direction;
-		normalize_targets(spin, speed, direction);
+		normalize_metrics(spin, speed, direction);
 		std::vector<float> targets;
+//		std::vector<float> vehicle_states;
 		
-		for(int i = 0; i < num_output_; i++)
+//		for(int i = 0; i < num_output_; i++)
+//		{
+//			targets.push_back(spin);
+//		}
+
+		double prev_direction;
+		auto prev = transitions_->previous();
+
+		if(prev.image == nullptr)
 		{
-			targets.push_back(spin);
+//			next_action.spin = 0;
+//			next_action.direction = 0;
+//			next_action.speed = 0;
+//			next_action.speed_change = 0;
+//			next_action.steer = 0;
+//			next_action.throttle = 0;
+//			return next_action;
+
+//			vehicle_states.push_back(0);
+//			vehicle_states.push_back(0);
+//			vehicle_states.push_back(0);
+//			vehicle_states.push_back(0);
+//			vehicle_states.push_back(0);
+//			vehicle_states.push_back(0);
+		}
+		else
+		{
+			normalize_metrics(prev.spin, prev.speed, prev_direction);
+//			vehicle_states.push_back(prev.spin);
+//			vehicle_states.push_back(prev_direction);
+//			vehicle_states.push_back(prev.speed);
+//			vehicle_states.push_back(prev.speed_change);
+//			vehicle_states.push_back(prev.steer);
+// 			vehicle_states.push_back(prev.throttle);			
 		}
 
-//		targets.push_back(speed);
-//		targets.push_back(speed_change);
-//		targets.push_back(direction);
+
+
+		targets.push_back(0);
+		targets.push_back(0);
+		targets.push_back(0);
+		targets.push_back(0);
+		targets.push_back(0);  // These are not normalized so are completely incorrect. Just using as placeholder. Targets get checked elsewhere now (during offline training and in control AutoItx while online).
+		targets.push_back(0);  // These are not normalized so are completely incorrect. Just using as placeholder. Targets get checked elsewhere now (during offline training and in control AutoItx while online).
+
+
 //		std::fill(target_input.begin(), target_input.end(), 0.0f);
 		//	set_action_vector(action, actions);
 		std::vector<float> labels2(num_output_);
 		std::fill(labels2.begin(), labels2.end(), 0.0f);
 		target_input_layer_->Reset(&targets[0], &labels2[0], minibatch_size_);
+//		vehicle_states_input_layer_->Reset(&vehicle_states[0], &labels2[0], minibatch_size_);
 		try
 		{
 			// Net forward
 			net_->ForwardPrefilled(nullptr);
 			const float * out_array = net_->blob_by_name("gtanet_fctop")->cpu_data(); // TODO store blob object and reuse pointer
-			auto check_fctop = array_to_vec(out_array, num_output_);
+//			auto check_fctop = array_to_vec(out_array, num_output_);
 //			log_targets_actuals(targets, check_fctop);
 
 			//		const float* out_array = results[0]->cpu_data();
@@ -526,15 +580,17 @@ class Agent
 			for(int i = 0; i < num_output_; i++)
 			{
 				last_action_values_.push_back(out_array[i]);
-				if(iter_ % 40 == 0)
-				{
-					LOG(INFO) << "action values " << i << " = " << out_array[i];
-				}
+//				if(iter_ % 40 == 0)
+//				{
+//					LOG(INFO) << "action values " << i << " = " << out_array[i];
+//				}
 			}
-			next_action.spin         = last_action_values_[0]; // Use look ahead value
-			next_action.speed        = last_action_values_[1]; // Use look ahead value
-//			next_action.speed_change = last_action_values_[2];
-//			next_action.direction    = last_action_values_[3];
+			next_action.spin         = last_action_values_[0];
+			next_action.direction    = last_action_values_[1];
+			next_action.speed        = last_action_values_[2];
+			next_action.speed_change = last_action_values_[3];
+			next_action.steer        = last_action_values_[4];
+			next_action.throttle     = last_action_values_[5];
 		}
 		catch(...)
 		{
@@ -591,11 +647,10 @@ class Agent
 		}
 	}
 
-	Action Perceive(cv::Mat* raw_state, double spin, double speed, 
-		double speed_change, float steer, float throttle)
+	Action Perceive(cv::Mat* screen, double spin, double speed, double speed_change, float steer, float throttle)
 	{
 		AddToReplayMemory(spin, speed, speed_change, steer, throttle);
-		Action next_action = Forward(raw_state, spin, speed, speed_change);
+		Action next_action = Forward(screen, spin, speed, speed_change, steer, throttle);
 		PossiblyLearn(next_action);
 
 		if(iter_  % 100 == 0)
@@ -603,15 +658,8 @@ class Agent
 			LOG(INFO) << "iteration: " << iter_;
 		}
 	
-		last_state_ = raw_state;
+		last_state_ = screen;
 		last_action_ = next_action;
-
-		if( ! should_train_)
-		{
-			// Image history gets deleted in Learn() during training
-			(*raw_state).release();
-			delete raw_state;
-		}
 
 		iter_ += 1;
 
