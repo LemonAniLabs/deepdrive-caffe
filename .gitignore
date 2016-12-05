@@ -1,5 +1,7 @@
 ## General
-
+caffe.sdf
+x64/Debug/*
+caffe.opensdf
 # Compiled Object files
 *.slo
 *.lo
@@ -69,7 +71,7 @@ models/*
 *lmdb
 
 # build, distribute, and bins (+ python proto bindings)
-build
+# build
 .build_debug/*
 .build_release/*
 distribute/*
@@ -93,3 +95,5 @@ LOCK
 LOG*
 CURRENT
 MANIFEST-*
+
+

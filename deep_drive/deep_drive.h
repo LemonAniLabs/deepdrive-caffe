@@ -9,7 +9,16 @@
 #include <thread>
 #include <direct.h>
 
-namespace deep_drive{
+namespace deep_drive {
+
+	inline std::string get_env_var( std::string const & key )
+	{
+		char * val = getenv( key.c_str() );
+		return val == NULL ? std::string("") : std::string(val);
+	}
+
+	const bool kShouldPrintTimeSince = get_env_var("DEEPDRIVE_PRINT_TIME_SINCE") == "true";
+
 	const int kSaveDataStep = 0; // 88986; // 63361; // Using folder now, first dataset has different sessions at these frames though.
 	auto kMsInStep = 125;
 	auto kStepDuration = std::chrono::milliseconds(kMsInStep); // Used to keep training data size down. With GeForce GTX 980, we can get to 50Hz or 20ms.
@@ -35,7 +44,6 @@ namespace deep_drive{
 	const double kAccumulatedSpinThreshold = 0.875;
 	const double kSpeedThreshold = 2;
 
-
 	#define AGENT_CONTROL_SHARED_MEMORY TEXT("Local\\AgentControl")
 	struct SharedAgentControlData
 	{
@@ -59,7 +67,7 @@ namespace deep_drive{
 		double desired_throttle;
 	};
 
-	#define REWARD_SHARED_MEMORY TEXT("Local\\AgentReward")
+	#define REWARD_SHARED_MEMORY TEXT("Global\\AgentReward")
 
 	struct SharedRewardData
 	{
@@ -78,6 +86,19 @@ namespace deep_drive{
 		bool is_game_driving;
 		int temp_action;
 	};
+
+	#define SCREEN_IMAGE_SHARED_MEMORY TEXT("Global\\ScreenImage")
+	struct SharedScreenData
+	{
+		int width;
+		int height;
+		int stride;
+		bool should_toggle_pause_game;
+		bool should_agent_wait;
+		int sampleCount;
+		BYTE imageData[684 * 227];
+	};
+	// Screen shared memory
 
 
 	inline void output(const char* out_string)
@@ -137,15 +158,18 @@ namespace deep_drive{
 	inline void reset_game_mod_options(SharedRewardData* shared_reward_memory)
 	{
 		(*shared_reward_memory).should_reset_agent = true;
-		wait_to_reset_game_mod_options(shared_reward_memory);
+//		wait_to_reset_game_mod_options(shared_reward_memory);
 	}
 
 	inline void print_time_since(std::chrono::system_clock::time_point start_time, std::string name)
 	{
-		typedef std::chrono::milliseconds ms;
-		auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
-		auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
-		output((name + " duration: " + std::to_string(elapsed_ms.count()) + "\n").c_str());
+		if(kShouldPrintTimeSince)
+		{
+			typedef std::chrono::milliseconds ms;
+			auto elapsed = std::chrono::high_resolution_clock::now() - start_time;
+			auto elapsed_ms = std::chrono::duration_cast<ms>(elapsed);
+			output((name + " duration: " + std::to_string(elapsed_ms.count()) + "\n").c_str());			
+		}
 	}
 
 	inline bool time_left_in_step(std::chrono::system_clock::time_point start_time)
@@ -202,7 +226,7 @@ namespace deep_drive{
 			", speed: "        << std::to_string(shared_reward_data->speed)                                   <<
 			", steer: "        << std::to_string(shared_agent_data->steer)                                    << 
 			", throttle: "     << std::to_string(shared_agent_data->throttle)                                 << 
-			", img_time: "     << std::to_string(screen_cap_start.time_since_epoch().count())                 <<           // B,Mse,kse,sec,mil,mic,n
+			", img_time: "     << std::to_string(screen_cap_start.time_since_epoch().count())                 << // B,Mse,kse,sec,mil,mic,n
 			", metric_time: "  << std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) << // B,Mse,kse,sec,mil,mic,n
 			", random_action: " << std::to_string( ! shared_reward_data->is_game_driving);
 		myfile.close();

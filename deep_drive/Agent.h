@@ -194,7 +194,7 @@ class Agent
 		return should_fill_replay_memory_;
 	}
 
-	void load_weights(std::string weight_file)
+	void load_weights(const std::string& weight_file)
 	{
 		net_->CopyTrainedLayersFrom(CAFFE_ROOT + "/" + weight_file);
 	}

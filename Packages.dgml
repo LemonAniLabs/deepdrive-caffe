@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<DirectedGraph GraphDirection="LeftToRight" xmlns="http://schemas.microsoft.com/vs/2009/dgml">
+  <Nodes>
+    <Node Id="caffe" Label="caffe" Category="Project" />
+    <Node Id="gtest 1.7.0" Label="gtest 1.7.0" Category="Package" />
+    <Node Id="hdf5-v120-complete 1.8.15" Label="hdf5-v120-complete 1.8.15" Category="Package" />
+    <Node Id="directxtk_desktop_2013 2015.10.30.1" Label="directxtk_desktop_2013 2015.10.30.1" Category="Package" />
+  </Nodes>
+  <Links>
+    <Link Source="caffe" Target="gtest 1.7.0" Category="Installed Package" />
+    <Link Source="caffe" Target="hdf5-v120-complete 1.8.15" Category="Installed Package" />
+    <Link Source="caffe" Target="directxtk_desktop_2013 2015.10.30.1" Category="Installed Package" />
+  </Links>
+  <Categories>
+    <Category Id="Project" />
+    <Category Id="Package" />
+  </Categories>
+  <Styles>
+    <Style TargetType="Node" GroupLabel="Project" ValueLabel="True">
+      <Condition Expression="HasCategory('Project')" />
+      <Setter Property="Background" Value="Blue" />
+    </Style>
+  </Styles>
+</DirectedGraph>
