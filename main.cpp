@@ -12,6 +12,7 @@
 #include <d3dcompiler.h>
 #include <d3dx10.h>
 #include <d3d10_1.h>
+#include <atlstr.h>
 
 #include <cuda_runtime.h>
 #include <cuda_d3d11_interop.h>
@@ -33,6 +34,7 @@
 
 #define DBOUT( s )                           \
 {                                            \
+   LOG(INFO) << s;                           \
    std::wostringstream os_;                  \
    os_ << s;                                 \
    OutputDebugStringW( os_.str().c_str() );  \
@@ -127,6 +129,7 @@ bool copyTextureToMemory(ID3D11Texture2D* tex, BYTE *& imcopy);
 void copyBackBufferToMemory(BYTE *& imcopy);
 bool cudaCopyBackBufferToMemory(ID3D11Texture2D* pSurface, BYTE *& imcopy);
 cv::Mat* get_screen();
+cv::Mat* get_screenFromSharedMem(SharedScreenData *&shared_screen_data);
 void showImage(cv::Mat img);
 
 double previousDistance = std::numeric_limits<double>::min();
@@ -139,7 +142,7 @@ ID3D11Texture2D* cq_CreateTextureFromSharedTextureHandle(unsigned int width, uns
 void CreateFromSharedHandle(HANDLE handle);
 
 // Sensor shared memory
-#define SHARED_CPU_MEMORY TEXT("Local\\Game2SensorMemory")
+#define SHARED_CPU_MEMORY TEXT("Global\\MyFileMappingObject2")
 struct SharedTexData
 {
 	LONGLONG frameTime;
@@ -225,6 +228,31 @@ SharedRewardData* get_shared_reward_data()
 
 // end shared reward data
 
+// Screen shared memory
+SharedScreenData* get_shared_screen_image_data()
+{
+	// Get shared CPU memory with pointer to shared GPU memory
+	HANDLE hScreenFileMap = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, SCREEN_IMAGE_SHARED_MEMORY);
+	if (hScreenFileMap == NULL)
+	{
+		return nullptr;
+	}
+
+	// Cast to our shared struct
+	SharedScreenData* infoIn = nullptr;
+
+	while (!infoIn)
+	{
+		infoIn = static_cast<SharedScreenData*>(MapViewOfFile(
+			hScreenFileMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedScreenData)));
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+
+	return infoIn;
+}
+// end shared screen data
+
 float get_reward(SharedRewardData* rewardData)
 {
 	double distance = double((*rewardData).distance);
@@ -277,7 +305,7 @@ float get_reward(SharedRewardData* rewardData)
 	return reward;
 }
 
-void load_pretrained_net(deep_drive::Agent*& agent_net, std::string path)
+void load_pretrained_net(deep_drive::Agent*& agent_net, const std::string& path)
 {
 	bool weights_loaded = false;
 	while(!weights_loaded)
@@ -296,8 +324,11 @@ void load_pretrained_net(deep_drive::Agent*& agent_net, std::string path)
 }
 
 void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_control, 
-	SharedRewardData* shared_reward)
+	SharedRewardData* shared_reward, const std::string& model_path)
 {
+
+
+
 	// Agent settings
 	auto replay_memory                     = 75;    // Frames are 152k each, so this adds up
 	auto replay_chance                     = 1.0;   // 0.01;  // Diversify training data with undersampling and try to approximate 1M contiguous frames as in DQN 
@@ -318,7 +349,7 @@ void InitAgent(deep_drive::Agent*& agent, SharedAgentControlData* shared_agent_c
 	auto weight_path_image_net             = "examples/deep_drive/bvlc_reference_caffenet.caffemodel";
 
 	auto should_load_deep_drive_pretrained = true;
-	auto weight_path_deep_drive            = "caffe_deep_drive_train_iter_206798.caffemodel";
+	auto weight_path_deep_drive            = model_path;
 	
 	if(should_resume_deep_drive + should_load_imagenet_pretrained + should_load_deep_drive_pretrained != 1)
 	{
@@ -387,8 +418,25 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	// Logs are in user folder AppData/Local/temp
 	google::InitGoogleLogging("caffe.exe");
 
-	auto shared_agent_data = wait_for_auto_it_sharing();
-	auto shared_reward_data = wait_for_shared_reward_data();
+	DBOUT("Starting deepdrive" << std::endl);
+
+	int argc;
+	LPWSTR *argvw = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+	if (argc < 1)
+	{
+		DBOUT("Expected caffe model path as first parameter" << std::endl);
+//		return 1;
+	}
+
+	std::string model_path = CW2A (argvw[1]);
+
+	//auto shared_agent_data = wait_for_auto_it_sharing();
+	//auto shared_agent_data = new SharedAgentControlData;
+	//auto shared_reward_data = wait_for_shared_reward_data();
+	auto shared_agent_data = new SharedAgentControlData;
+	auto shared_reward_data = new SharedRewardData;
+	auto* shared_screen_data = get_shared_screen_image_data();
 
 	HWND hWnd;
 	WNDCLASSEX wc;
@@ -420,33 +468,42 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	                          hInstance,
 	                          NULL);
 
+	DBOUT("Created window" << std::endl);
+
+
 	ShowWindow(hWnd, nCmdShow);
 
 	// set up and initialize Direct3D
 	InitD3D(hWnd);
 
-	cv::Mat* blank = get_screen(); // First screen is always black.
+	DBOUT("Initialized d3d" << std::endl);
 
-	bool should_show_image = false;
+
+	//cv::Mat* blank = get_screen(); // First screen is always black.
+
+
+	bool should_show_image = true;
 	bool should_skip_agent = false;
 
 	Agent* agent = nullptr;
 
 	if( ! should_skip_agent)
 	{
-		InitAgent(agent, shared_agent_data, shared_reward_data);
+		InitAgent(agent, shared_agent_data, shared_reward_data, model_path);
 	}
+
+	DBOUT("Initialized agent" << std::endl);
 
 //	int action = 0;
 //	int current_action = 0;
 	// TODO: Put these in config file
 	int step = 0;
 	(*shared_agent_data).step = step;
-	bool should_save_data = true;
+	bool should_save_data = false;
 	int save_input_every = 1;
 	bool should_reload_based_on_distance = false;
-	bool should_reload_based_on_duration = true;
-	bool should_deep_drive_only = false;
+	bool should_reload_based_on_duration = false;
+	bool should_deep_drive_only = true;
 	bool should_toggle_game_and_deep_drive = false;
 	shared_reward_data->should_perform_random_action = true; // Otherwise, we just mildly accelerate and disengage
 	auto kMsToExploitOrExplore = 1000;
@@ -459,13 +516,27 @@ int WINAPI WinMain(HINSTANCE hInstance,
 //	bool manual_action = true;
 	double accumulated_spin = 0;
 
-	std::chrono::system_clock::time_point game_start_time = 
-		reload_game(shared_agent_data, shared_reward_data, should_save_data);
+	bool should_throttle_steps_per_second = false;
+	int steps_per_second = 0;
+
+	if(get_env_var("DEEPDRIVE_THROTTLE_STEPS_PER_SECOND") == "true")
+	{
+		DBOUT("Throttling steps per second" << std::endl);
+		should_throttle_steps_per_second = true;
+	}
+
+	std::chrono::system_clock::time_point game_start_time = std::chrono::high_resolution_clock::now();
+	/*std::chrono::system_clock::time_point game_start_time = 
+		reload_game(shared_agent_data, shared_reward_data, should_save_data);*/
+
+	DBOUT("Reloaded game, starting game loop" << std::endl);
+
 
 	// Main loop
 	MSG msg;
 	while (true)
 	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 		auto start_time = std::chrono::high_resolution_clock::now();
 		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
@@ -476,11 +547,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				break;
 		}
 
- 		RenderFrame();
+ 		//RenderFrame();
 
 		auto screen_cap_start = std::chrono::high_resolution_clock::now();
-		cv::Mat* screen = get_screen();
-//		print_time_since(screen_cap_start, "screen cap");
+		cv::Mat* screen = get_screenFromSharedMem(shared_screen_data);
+		print_time_since(screen_cap_start, "screen cap");
 		auto screen_cap_end   = std::chrono::high_resolution_clock::now();
 
 		if(screen)
@@ -491,9 +562,12 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			}
 		}
 
-		if(step % 100 == 0)
+		if(step % 1000 == 0)
 		{
+			// Tell agent to wait so that it does noop instead of repeating the previous action.
+			(*shared_agent_data).should_agent_wait = true;
 			reset_game_mod_options(shared_reward_data);
+			(*shared_agent_data).should_agent_wait = false;
 		}
 
 		if(screen == nullptr)
@@ -543,7 +617,8 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				Action next_action = agent->Perceive(screen, shared_reward_data->spin, 
 					shared_reward_data->speed, speed_change, shared_agent_data->steer, 
 					shared_agent_data->throttle);
-//				print_time_since(screen_cap_start, "screen cap to perceive");
+				
+				print_time_since(screen_cap_start, "screen cap to perceive");
 				accumulated_spin += next_action.spin;
 				if(agent->get_should_train())
 				{
@@ -580,17 +655,13 @@ int WINAPI WinMain(HINSTANCE hInstance,
 					(*shared_agent_data ).desired_steer                = next_action.steer;
 					(*shared_agent_data ).desired_throttle             = next_action.throttle;						
 
+					(*shared_agent_data).actual_spin         = shared_reward_data->spin;
+					(*shared_agent_data).actual_speed        = shared_reward_data->speed;
+					(*shared_agent_data).actual_speed_change = shared_reward_data->speed - last_speed;		
 
-					while(time_left_in_step(start_time))
-					{
-						// This has no effect on saved data.
-						// It just allows the agent to react to the state of the vehicle throughout the duration
-						// of the step.
-						(*shared_agent_data).actual_spin         = shared_reward_data->spin;
-						(*shared_agent_data).actual_speed        = shared_reward_data->speed;
-						(*shared_agent_data).actual_speed_change = shared_reward_data->speed - last_speed;						
-					}
 
+					DBOUT("Speed" << next_action.speed << std::endl);
+					DBOUT("Steer" << next_action.steer << std::endl);
 //					// Perform a random action once in a while
 //					if(should_save_data && get_random_double(0, 1) < 0.50)
 //					{
@@ -634,7 +705,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
 		(*shared_agent_data).step = step;
 
-		enforce_period(start_time);
+		if(should_throttle_steps_per_second)
+		{
+			enforce_period(start_time);
+		}
+
 
 	}
 
@@ -768,16 +843,16 @@ void InitD3D(HWND hWnd)
 	InitPipeline();
 	InitGraphics();
 
-	SharedTexData info;
-	while (GetCaptureInfo(info) == false)
-	{
-		DBOUT("********"
-			<< "Shared memory not available, have you changed resolution to trigger shared memory?" 
-			<< "********"
-			<< std::endl);
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-		//throw std::runtime_error("Shared memory not available, have you changed resolution to trigger shared memory?");
-	}
+	//SharedTexData info;
+	//while (GetCaptureInfo(info) == false)
+	//{
+	//	DBOUT("********"
+	//		<< "Shared memory not available, have you changed resolution to trigger shared memory?" 
+	//		<< "********"
+	//		<< std::endl);
+	//	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	//	//throw std::runtime_error("Shared memory not available, have you changed resolution to trigger shared memory?");
+	//}
 }
 
 static float Z_ROTATE = 1.5f * M_PI;
@@ -875,36 +950,34 @@ cv::Mat* get_screen()
 	{
 		success = copyTextureToMemory(backBufferTex, imcopy);
 	}
-//	print_time_since(screen_copy_start, "screen gpu transfer");
+	print_time_since(screen_copy_start, "screen gpu transfer");
 
 	backBufferTex->Release();
 
 	if(success)
 	{
-		//imcopy[0] = 1; /// DEELLLLLLLLLEEEEEEETTTTTTE THISSS@
-
 		size_t step = SCREEN_WIDTH * 4;
 		cv::Mat* img_pt = new cv::Mat(SCREEN_HEIGHT, SCREEN_WIDTH, CV_8UC4, imcopy, step);
-//		print_time_since(screen_copy_start, "screen new");
+		print_time_since(screen_copy_start, "screen new");
 
 		cv::Mat img = *img_pt;
 //		cv::Mat ret_im = img.clone();
 		cv::Mat* ret_pt = new cv::Mat(SCREEN_HEIGHT, SCREEN_WIDTH, CV_8UC4);
 		img_pt->copyTo(*ret_pt); // Make sure we decouple from imcopy
-//		print_time_since(screen_copy_start, "screen copy");
+		print_time_since(screen_copy_start, "screen copy");
 
 		//	cv::Mat img = cv::imdecode(, CV_32FC4);
 		cv::cvtColor(*ret_pt, *ret_pt, CV_RGBA2BGR);
-//		print_time_since(screen_copy_start, "screen convert");
+		print_time_since(screen_copy_start, "screen convert");
 		//cv::Mat src = *img;
-		//cv::Mat ret = src.clone(); // Give OpenCV ownership of the memory
+		//cv::Mat ret = src.clone(); // Give OpenCV ownership of the memory	
 
 
 
 		//src.release();
 		delete img_pt;
 		delete[] imcopy;
-//		print_time_since(screen_copy_start, "screen delete");
+		print_time_since(screen_copy_start, "screen delete");
 		return ret_pt;
 //		return img;
 	} 
@@ -912,6 +985,17 @@ cv::Mat* get_screen()
 	{
 		return nullptr;
 	}
+
+}
+
+cv::Mat* get_screenFromSharedMem(SharedScreenData *&shared_screen_data)
+{
+	IplImage* pIplImg = cvCreateImage(cvSize(shared_screen_data->width, shared_screen_data->height), IPL_DEPTH_8U, 3);
+
+	memcpy(pIplImg->imageData, shared_screen_data->imageData, abs(shared_screen_data->stride)*shared_screen_data->height);
+	cv::Mat *frame = new cv::Mat(cv::cvarrToMat(pIplImg));
+
+	return frame;
 
 }
 
@@ -1220,7 +1304,7 @@ void showImage(cv::Mat img)
 	cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE);// Create a window for display.
 	cv::imshow("Display window", img); // Show our image inside it.
 
-	cv::waitKey(0);
+	//cv::waitKey(0);
 }
 
 bool copyTextureToMemory(ID3D11Texture2D* tex, BYTE *& imcopy)
