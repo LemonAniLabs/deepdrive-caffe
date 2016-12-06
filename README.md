@@ -22,6 +22,9 @@ Framework development discussions and thorough bug reports are collected on [Iss
 
 Happy brewing!
 
+# Dependency Lib 
+https://drive.google.com/file/d/0B66UUlTHP-jERHc5Z0o1bUFDTmM/view?usp=sharing
+
 ## License and Citation
 
 Caffe is released under the [BSD 2-Clause license](https://github.com/BVLC/caffe/blob/master/LICENSE).
